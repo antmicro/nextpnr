@@ -227,12 +227,72 @@ void PseudoPipModel::prepare_for_routing(const Context *ctx, const std::vector<S
         site_to_pseudo_pips[site_for_pip].push_back(pip_idx);
     }
 
+    // Build lookup maps for pseudo pips and LUT BELs
+    lut_bels_for_pseudo_pip.clear();
+    pseudo_pips_for_lut_bel.clear();
+
+    const std::vector<LutElement> &lut_elements = ctx->lut_elements.at(tile_type);
+    const TileTypeInfoPOD &tile_type_data = ctx->chip_info->tile_types[tile_type];
+
+    for (int32_t pip_idx = 0; pip_idx < tile_type_data.pip_data.ssize(); ++pip_idx) {
+
+        // Check if we have a pseudo PIP
+        const PipInfoPOD &pip_data = tile_type_data.pip_data[pip_idx];
+        if (pip_data.pseudo_cell_wires.size() == 0) {
+            continue;
+        }
+
+        // Get its site
+        size_t site = pseudo_pip_sites.at(pip_idx);
+
+        // Get associated BELs
+        PipId pip;
+        pip.tile = tile;
+        pip.index = pip_idx;
+        const auto& pseudo_pip_bels = ctx->pseudo_pip_data.get_logic_bels_for_pip(ctx, site, pip);
+
+        // Build lookups
+        for (const auto& pseudo_pip_bel : pseudo_pip_bels) {
+            const BelInfoPOD &bel_data = tile_type_data.bel_data[pseudo_pip_bel.bel_index];
+            if (bel_data.lut_element != -1) {
+                const LutElement& lut_element = lut_elements.at(bel_data.lut_element);
+
+                for (const auto& it : lut_element.lut_bels) {
+                    const LutBel& lut_bel = it.second;
+
+                    pseudo_pips_for_lut_bel[lut_bel.name].push_back(pip_idx);
+                    lut_bels_for_pseudo_pip[pip_idx].push_back(lut_bel.name);
+                }
+            }
+        }
+    }
+    // DEBUG //
+    printf("Tile type %d\n", tile_type);
+    printf(" LUT BELs for pseuso PIP:\n");
+    for (const auto& it : lut_bels_for_pseudo_pip) {
+        printf("  %d: ", it.first);
+        for (const auto& it2 : it.second) {
+            printf("%s ", it2.c_str(ctx));
+        }
+
+        printf("\n");
+    }
+    printf(" Pseudo PIPs for LUT BEL:\n");
+    for (const auto& it : pseudo_pips_for_lut_bel) {
+        printf("  %s: ", it.first.c_str(ctx));
+        for (const auto& it2 : it.second) {
+            printf("%d ", it2);
+        }
+        printf("\n");
+    }
+    // DEBUG //
+
     for (auto &site_pair : site_to_pseudo_pips) {
         update_site(ctx, site_pair.first);
     }
 }
 
-bool PseudoPipModel::checkPipAvail(const Context *ctx, PipId pip) const
+bool PseudoPipModel::checkPipAvail(const Context *ctx, PipId pip, NetInfo* net) const
 {
     bool allowed = allowed_pseudo_pips.get(pip.index);
     if (!allowed) {
@@ -241,12 +301,38 @@ bool PseudoPipModel::checkPipAvail(const Context *ctx, PipId pip) const
             log_info("Pseudo pip %s not allowed\n", ctx->nameOfPip(pip));
         }
 #endif
+        return false;
+    }
+
+    if (net != nullptr && lut_bels_for_pseudo_pip.count(pip.index) != 0) {
+        for (const auto& lut_bel_name : lut_bels_for_pseudo_pip.at(pip.index)) {
+            for (const auto& other_pip : pseudo_pips_for_lut_bel.at(lut_bel_name)) {
+                if (other_pip == pip.index) {
+                    continue;
+                }
+
+                if (active_pseudo_pips.count(other_pip)) {
+                    const NetInfo* other_net = active_pseudo_pips.at(other_pip);
+                    log_info("checkPipAvail: %s vs. %s\n", net->name.c_str(ctx), other_net->name.c_str(ctx));
+                    if (other_net->name == net->name) {
+                        log_info("checkPipAvail: AHA! %s %s %s\n", ctx->nameOfPip(pip), net->name.c_str(ctx), other_net->name.c_str(ctx));
+                        allowed = false;
+                        break;
+                    }
+                }
+
+            }
+
+            if (!allowed) {
+                break;
+            }
+        }
     }
 
     return allowed;
 }
 
-void PseudoPipModel::bindPip(const Context *ctx, PipId pip)
+void PseudoPipModel::bindPip(const Context *ctx, PipId pip, NetInfo* net)
 {
     // If pseudo_pip_sites is empty, then prepare_for_routing was never
     // invoked.  This is likely because PseudoPipModel was constructed during
@@ -259,7 +345,7 @@ void PseudoPipModel::bindPip(const Context *ctx, PipId pip)
     NPNR_ASSERT(allowed_pseudo_pips.get(pip.index));
 
     // Mark that this pseudo pip is active.
-    auto result = active_pseudo_pips.emplace(pip.index);
+    auto result = active_pseudo_pips.emplace(pip.index, net);
     NPNR_ASSERT(result.second);
 
     // Update the site this pseudo pip is within.

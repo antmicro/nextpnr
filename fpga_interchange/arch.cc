@@ -1792,7 +1792,7 @@ bool Arch::checkPipAvailForNet(PipId pip, NetInfo *net) const
         // failures will not be detected.  However the current FPGA
         // interchange schema does not provide a cell type to place.
         if (tile_status_iter != tileStatus.end() &&
-            !tile_status_iter->second.pseudo_pip_model.checkPipAvail(getCtx(), pip)) {
+            !tile_status_iter->second.pseudo_pip_model.checkPipAvail(getCtx(), pip, net)) {
             return false;
         }
     }

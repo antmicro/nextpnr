@@ -583,7 +583,7 @@ struct Arch : ArchAPI<ArchRanges>
         }
 
         if (pip_data.pseudo_cell_wires.size() > 0) {
-            get_tile_status(pip.tile).pseudo_pip_model.bindPip(getCtx(), pip);
+            get_tile_status(pip.tile).pseudo_pip_model.bindPip(getCtx(), pip, net);
         }
     }
 

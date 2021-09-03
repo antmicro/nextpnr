@@ -90,8 +90,11 @@ struct PseudoPipModel
     DynamicBitarray<> allowed_pseudo_pips;
     dict<int32_t, size_t> pseudo_pip_sites;
     dict<size_t, std::vector<int32_t>> site_to_pseudo_pips;
-    pool<int32_t> active_pseudo_pips;
+    dict<int32_t, NetInfo*> active_pseudo_pips;
     std::vector<int32_t> scratch;
+
+    dict<int32_t,  std::vector<IdString>> lut_bels_for_pseudo_pip;
+    dict<IdString, std::vector<int32_t>>  pseudo_pips_for_lut_bel;
 
     // Call when a tile is initialized.
     void init(Context *ctx, int32_t tile);
@@ -106,11 +109,11 @@ struct PseudoPipModel
 
     // Returns true if the pseudo pip is allowed given current site placements
     // and other pseudo pips.
-    bool checkPipAvail(const Context *ctx, PipId pip) const;
+    bool checkPipAvail(const Context *ctx, PipId pip, NetInfo* net) const;
 
     // Enables a pseudo pip in the model.  May cause other pseudo pips to
     // become unavailable.
-    void bindPip(const Context *ctx, PipId pip);
+    void bindPip(const Context *ctx, PipId pip, NetInfo* net);
 
     // Removes a pseudo pip from the model.  May cause other pseudo pips to
     // become available.
