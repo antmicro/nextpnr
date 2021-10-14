@@ -986,6 +986,51 @@ struct Router2
         }
     }
 
+    // Dumps congestion map to a CSV file
+    void dump_congestion (const std::string& fileName) {
+
+        size_t dx = ctx->getGridDimX();
+        size_t dy = ctx->getGridDimY();
+
+        // Collect congestion
+        std::vector<int32_t> congestion;
+
+        congestion.resize(dy * dx);
+        std::fill(congestion.begin(), congestion.end(), 0);
+
+        for (size_t i = 0; i < nets.size(); i++) {
+            auto& net = nets.at(i);
+            for (const auto &w : net.wires) {
+                auto& wire = wire_data(w.first);
+
+                // It is assumed that a wire occupies only one tile. But what
+                // about long wires ?
+                size_t  ofs = wire.y * dx + wire.x;
+                int32_t pel = wire.curr_cong - 1;
+
+                congestion[ofs] += pel;
+            }
+        }
+
+        // Write to CSV
+        FILE* fp = fopen(fileName.c_str(), "w");
+        if (!fp) {
+            log("Error writing to '%s'\n", fileName.c_str());
+            return;
+        }
+
+        size_t ofs = 0;
+        for (size_t y=0; y<dy; ++y) {
+            for (size_t x=0; x<dx; ++x) {
+                fprintf(fp, "%d", congestion[ofs++]);
+                if (x != (dx-1)) fputc(',', fp);
+            }
+            fprintf(fp, "\n");
+        }
+
+        fclose(fp);
+    }
+
     bool bind_and_check(NetInfo *net, int usr_idx, int phys_pin)
     {
 #ifdef ARCH_ECP5
@@ -1404,6 +1449,10 @@ struct Router2
                     log_error("Failed to open wiretype heatmap %s for writing.\n", filename.c_str());
                 write_wiretype_heatmap(cong_map);
                 log_info("        wrote wiretype heatmap to %s.\n", filename.c_str());
+
+                filename = cfg.heatmap + "-congestion_" + std::to_string(iter) + ".csv";
+                dump_congestion(filename);
+                log_info("        wrote congestion heatmap to %s.\n", filename.c_str());
             }
             int tmgfail = 0;
             if (timing_driven)
