@@ -2304,6 +2304,124 @@ struct NexusPacker
         }
     }
 
+    void infer_lutffs() {
+        log_info("Inferring LUT+FF pairs...\n");
+
+        size_t num_comb = 0;
+        size_t num_ff   = 0;
+        size_t num_pair = 0;
+
+        for (auto &cell : ctx->cells) {
+            CellInfo *ff = cell.second.get();
+            if (ff->type != id_OXIDE_FF) {
+                continue;
+            }
+
+            num_ff++;
+
+            // Get input net
+            NetInfo *di = get_net_or_empty(ff, id_M); // At the packing stage all inputs go to M
+            if (di == nullptr || di->driver.cell == nullptr) {
+                continue;
+            }
+
+            // Skip if there are multiple sinks
+            if (di->users.size() != 1) {
+                continue;
+            }
+
+            // Check if the driver is a LUT and the direct connection is from F
+            CellInfo* lut = di->driver.cell;
+            if (lut->type != id_OXIDE_COMB || di->driver.port != id_F) {
+                continue;
+            }
+
+            // The LUT must be in LOGIC mode
+            if (str_or_default(lut->params, id_MODE, "LOGIC") != "LOGIC") {
+                continue;
+            }
+
+            // Skip clusters
+            // FIXME: In case of carry chain make the LUTFF part of the chain
+            if (lut->cluster != ClusterId() || ff->cluster != ClusterId()) {
+                continue;
+            }
+
+            num_pair++;
+
+            // Create the new cell
+            IdString name = ctx->id(stringf("%s_%s", ctx->nameOf(lut), ctx->nameOf(ff)));
+            CellInfo *lutff = ctx->createCell(name, id_OXIDE_COMBFF);
+
+            // Reconnect ports
+            for (const auto& port : ff->ports) {
+                NetInfo* net = port.second.net;
+                if (net) {
+                    disconnect_port(ctx, ff, port.first);
+
+                    // FIXME: remove the ports from the BEL in the arch
+                    if (port.first != id_M && port.first != id_DI) {
+                        lutff->ports[port.first].name = port.second.name;
+                        lutff->ports[port.first].type = port.second.type;
+                        connect_port(ctx, net, lutff, port.first);
+                    }
+                }
+            }
+
+            for (const auto& port : lut->ports) {
+                NetInfo* net = port.second.net;
+                if (net) {
+                    disconnect_port(ctx, lut, port.first);
+
+                    // FIXME: remove the ports from the BEL in the arch
+                    if (port.first != id_F && port.first != id_F1) {
+                        lutff->ports[port.first].name = port.second.name;
+                        lutff->ports[port.first].type = port.second.type;
+                        connect_port(ctx, net, lutff, port.first);
+                    }
+                }
+            }
+
+            // Copy attributes / parameters
+            // FIXME: Handle duplicates / conflicts
+            for (const auto it: ff->attrs) {
+                lutff->attrs[it.first] = it.second;
+            }
+            for (const auto it: lut->attrs) {
+                lutff->attrs[it.first] = it.second;
+            }
+
+            for (const auto it: ff->params) {
+                lutff->params[it.first] = it.second;
+            }
+            for (const auto it: lut->params) {
+                lutff->params[it.first] = it.second;
+            }
+
+            // Delete the direct connection net
+            ctx->nets.erase(di->name);
+
+            // Delete the original LUT and FF cells
+            ctx->cells.erase(ff->name);
+            ctx->cells.erase(lut->name);
+        }
+
+        // Count OXIDE_COMB, OXIDE_FF are already counted
+        for (auto &cell : ctx->cells) {
+            CellInfo *ff = cell.second.get();
+            if (ff->type == id_OXIDE_COMB) {
+                num_comb++;
+            }
+        }
+
+        // Print statistics
+        log_info("    Created %zu LUT+FF pairs from %zu FFs and %zu LUTs\n",
+            num_pair,
+            num_ff,
+            num_comb
+        );
+    }
+
     explicit NexusPacker(Context *ctx) : ctx(ctx) {}
 
     void operator()()
@@ -2321,6 +2439,7 @@ struct NexusPacker
         pack_plls();
         pack_constants();
         pack_luts();
+        infer_lutffs();
         pack_ip();
         handle_iologic();
         promote_globals();
@@ -2356,7 +2475,7 @@ const std::vector<std::string> dsp_bus_prefices = {
 void Arch::assignCellInfo(CellInfo *cell)
 {
     cell->tmg_index = -1;
-    if (cell->type == id_OXIDE_COMB) {
+    if (cell->type == id_OXIDE_COMB || cell->type == id_OXIDE_COMBFF) {
         cell->lutInfo.is_memory = str_or_default(cell->params, id_MODE, "LOGIC") == "DPRAM";
         cell->lutInfo.is_carry = str_or_default(cell->params, id_MODE, "LOGIC") == "CCU2";
         cell->lutInfo.mux2_used = port_used(cell, id_OFX);
@@ -2376,7 +2495,7 @@ void Arch::assignCellInfo(CellInfo *cell)
         } else {
             cell->tmg_index = get_cell_timing_idx(id_OXIDE_COMB, id_LUT4);
         }
-    } else if (cell->type == id_OXIDE_FF) {
+    } else if (cell->type == id_OXIDE_FF || cell->type == id_OXIDE_COMBFF) {
         cell->ffInfo.ctrlset.async = str_or_default(cell->params, id_SRMODE, "LSR_OVER_CE") == "ASYNC";
         cell->ffInfo.ctrlset.regddr_en = is_enabled(cell, id_REGDDR);
         cell->ffInfo.ctrlset.gsr_en = is_enabled(cell, id_GSR);

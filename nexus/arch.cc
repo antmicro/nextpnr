@@ -105,6 +105,7 @@ Arch::Arch(ArchArgs args) : args(args)
     for (size_t i = 0; i < chip_info->grid.size(); i++) {
         tileStatus[i].boundcells.resize(db->loctypes[chip_info->grid[i].loc_type].bels.size());
     }
+
     // This structure is needed for a fast getBelByLocation because bels can have an offset
     for (size_t i = 0; i < chip_info->grid.size(); i++) {
         auto &loc = db->loctypes[chip_info->grid[i].loc_type];
@@ -664,6 +665,7 @@ bool Arch::place()
         cfg.cellGroups.emplace_back();
         cfg.cellGroups.back().insert({id_OXIDE_COMB});
         cfg.cellGroups.back().insert({id_OXIDE_FF});
+        cfg.cellGroups.back().insert({id_OXIDE_COMBFF});
 
         cfg.beta = 0.5;
         cfg.criticalityExponent = 7;

@@ -165,19 +165,17 @@ typedef IdString ClusterId;
 
 struct ArchCellInfo : BaseClusterInfo
 {
-    union
+    struct
     {
-        struct
-        {
-            bool is_memory, is_carry, mux2_used;
-            NetInfo *f, *ofx;
-        } lutInfo;
-        struct
-        {
-            FFControlSet ctrlset;
-            NetInfo *di, *m;
-        } ffInfo;
-    };
+        bool is_memory, is_carry, mux2_used;
+        NetInfo *f, *ofx;
+    } lutInfo;
+
+    struct
+    {
+        FFControlSet ctrlset;
+        NetInfo *di, *m;
+    } ffInfo;
 
     int tmg_index = -1;
     // Map from cell/bel ports to logical timing ports

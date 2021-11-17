@@ -27,6 +27,8 @@ X(WDI)
 X(WCK)
 X(WRE)
 
+X(OXIDE_COMBFF)
+
 X(RAMW)
 X(A0)
 X(A1)

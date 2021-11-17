@@ -34,6 +34,9 @@ bool Arch::nexus_logic_tile_valid(LogicTileStatus &lts) const
             CellInfo *ff0 = lts.cells[(s << 3) | BEL_FF0];
             CellInfo *ff1 = lts.cells[(s << 3) | BEL_FF1];
 
+            CellInfo *lutff0 = lts.cells[(s << 3) | BEL_LUTFF0];
+            CellInfo *lutff1 = lts.cells[(s << 3) | BEL_LUTFF1];
+
             if (s == 2) {
                 CellInfo *ramw = lts.cells[(s << 3) | BEL_RAMW];
                 // Nothing else in SLICEC can be used if the RAMW is used
@@ -41,6 +44,26 @@ bool Arch::nexus_logic_tile_valid(LogicTileStatus &lts) const
                     if (lut0 != nullptr || lut1 != nullptr || ff0 != nullptr || ff1 != nullptr)
                         return false;
                 }
+            }
+
+            // Cannot have a LUTFF and LUT or FF in the same slice.
+            // If we have a LUTFF consider it as both a LUT and an FF
+            if (lutff0 != nullptr) {
+                if (lut0 != nullptr || ff0 != nullptr) {
+                    return false;
+                }
+
+                lut0 = lutff0;
+                ff0  = lutff0;
+            }
+
+            if (lutff1 != nullptr) {
+                if (lut1 != nullptr || ff1 != nullptr) {
+                    return false;
+                }
+
+                lut1 = lutff1;
+                ff1  = lutff1;
             }
 
             if (lut0 != nullptr) {
@@ -63,7 +86,7 @@ bool Arch::nexus_logic_tile_valid(LogicTileStatus &lts) const
                     return false;
             }
             // Check for correct use of FF1 DI
-            if (ff1 != nullptr && ff1->ffInfo.di != nullptr && (lut1 == nullptr || ff1->ffInfo.di != lut1->lutInfo.f))
+            if (ff1 != nullptr && ff1->ffInfo.di != nullptr && lutff1 == nullptr && (lut1 == nullptr || ff1->ffInfo.di != lut1->lutInfo.f))
                 return false;
             lts.slices[s].valid = true;
         } else if (!lts.slices[s].valid) {

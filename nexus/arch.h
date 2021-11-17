@@ -992,7 +992,14 @@ struct Arch : BaseArch<ArchRanges>
             auto &ts = tileStatus.at(pip.tile);
             if (!ts.lts)
                 return false;
+
             const CellInfo *lut = ts.lts->cells[((lut_idx / 2) << 3) | (BEL_LUT0 + (lut_idx % 2))];
+            const CellInfo *lutff = ts.lts->cells[((lut_idx / 2) << 3) | (BEL_LUTFF0 + (lut_idx % 2))];
+
+            if (!lut) {
+                lut = lutff;
+            }
+
             if (lut) {
                 if (lut->lutInfo.is_memory)
                     return true;
@@ -1380,12 +1387,15 @@ struct Arch : BaseArch<ArchRanges>
         BEL_FF0 = 2,
         BEL_FF1 = 3,
         BEL_RAMW = 4,
+        BEL_LUTFF0 = 6,
+        BEL_LUTFF1 = 7,
     };
 
     void update_logic_bel(BelId bel, CellInfo *cell)
     {
         int z = bel_data(bel).z;
         NPNR_ASSERT(z < 32);
+        NPNR_ASSERT((z & 0x7) != 5); // z=5 is empty
         auto &tts = tileStatus[bel.tile];
         if (tts.lts == nullptr)
             tts.lts = new LogicTileStatus();
@@ -1396,12 +1406,14 @@ struct Arch : BaseArch<ArchRanges>
         case BEL_FF1:
         case BEL_RAMW:
             ts.halfs[(z >> 3) / 2].dirty = true;
-        /* fall-through */
-        case BEL_LUT0:
-        case BEL_LUT1:
-            ts.slices[(z >> 3)].dirty = true;
+            break;
+        case BEL_LUTFF0:
+        case BEL_LUTFF1:
+            ts.halfs[((z - 4) >> 3) / 2].dirty = true;
             break;
         }
+
+        ts.slices[(z >> 3)].dirty = true;
     }
 
     bool nexus_logic_tile_valid(LogicTileStatus &lts) const;
