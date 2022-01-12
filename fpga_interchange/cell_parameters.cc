@@ -216,7 +216,7 @@ bool CellParameters::compare_property(const Context *ctx, IdString cell_type, Id
     }
 
     // Unreachable!
-    NPNR_ASSERT(false);
+    NPNR_ASSERT_FALSE("unreachable");
 }
 
 NEXTPNR_NAMESPACE_END

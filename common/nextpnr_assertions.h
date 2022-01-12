@@ -51,8 +51,14 @@ inline void assert_fail_impl_str(std::string message, const char *expr_str, cons
     throw assertion_failure(message, expr_str, filename, line);
 }
 
+#ifdef NDEBUG
+#define NPNR_ASSERT(cond) ((void)(cond))
+#define NPNR_ASSERT_MSG(cond, msg) ((void)(cond))
+#else
 #define NPNR_ASSERT(cond) (!(cond) ? assert_fail_impl(#cond, #cond, __FILE__, __LINE__) : (void)true)
 #define NPNR_ASSERT_MSG(cond, msg) (!(cond) ? assert_fail_impl(msg, #cond, __FILE__, __LINE__) : (void)true)
+#endif
+
 #define NPNR_ASSERT_FALSE(msg) (assert_fail_impl(msg, "false", __FILE__, __LINE__))
 #define NPNR_ASSERT_FALSE_STR(msg) (assert_fail_impl_str(msg, "false", __FILE__, __LINE__))
 
