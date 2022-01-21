@@ -25,27 +25,13 @@
 
 NEXTPNR_NAMESPACE_BEGIN
 
-///@brief Factor to adjust the penalty calculation for deltas outside the segment bounding box:
-//      factor < 1.0: penalty has less impact on the final returned delay
-//      factor > 1.0: penalty has more impact on the final returned delay
-static constexpr float PENALTY_FACTOR = 1.f;
-
-///@brief Minimum penalty cost that is added when penalizing a delta outside the segment bounding box.
-static constexpr delay_t PENALTY_MIN = 1;
-
-// also known as the L1 norm
-static int manhattan_distance(const std::pair<int32_t, int32_t> &a, const std::pair<int32_t, int32_t> &b)
-{
-    return std::abs(b.first - a.first) + std::abs(b.second - a.second);
-}
-
 delay_t CostMap::get_delay(const Context *ctx, WireId src_wire, WireId dst_wire, int32_t wire_type_id) const
 {
-    const auto &dst_data = ctx->wire_data(dst);
-    if (src.tile == 0 && dst_data.name == ID_LOCAL_VCC)
+    const auto &dst_data = ctx->wire_data(dst_wire);
+    if (src_wire.tile == 0 && dst_data.name == ID_LOCAL_VCC)
         return 0;
-    int src_x = src.tile % chip_info->width, src_y = src.tile / chip_info->width;
-    int dst_x = dst.tile % chip_info->width, dst_y = dst.tile / chip_info->width;
+    int src_x = src_wire.tile % ctx->chip_info->width, src_y = src_wire.tile / ctx->chip_info->width;
+    int dst_x = dst_wire.tile % ctx->chip_info->width, dst_y = dst_wire.tile / ctx->chip_info->width;
     int dist_x = std::abs(src_x - dst_x);
     int dist_y = std::abs(src_y - dst_y);
 
@@ -74,7 +60,7 @@ void CostMap::set_cost_map(const Context *ctx, int32_t wire_type_id,
 
     // Fill matrix with sentinel of -1 to know where the holes in the matrix
     // are.
-    std::fill_n(delay_matrix.data.data(), delay_matrix.data.num_elements(), std::numeric_limits<delay_t)::max();
+    std::fill_n(delay_matrix.data.data(), delay_matrix.data.num_elements(), std::numeric_limits<delay_t>::min());
 
     for (const auto &delay_pair : delays) {
         auto &dx_dy = delay_pair.first;
@@ -96,10 +82,10 @@ void CostMap::set_cost_map(const Context *ctx, int32_t wire_type_id,
     }
 }
 
-void CostMap::from_reader(lookahead_storage::CostMap::Reader reader)
+void CostMap::from_reader(lookahead_storage::CostMap::Reader reader, const Context *ctx)
 {
     for (auto cost_entry : reader.getCostMap()) {
-        TypeWirePair key(cost_entry.getKey());
+        int32_t key = cost_entry.getKey();
 
         auto result = cost_map_.emplace(key, CostMapEntry());
         NPNR_ASSERT(result.second);
@@ -108,7 +94,7 @@ void CostMap::from_reader(lookahead_storage::CostMap::Reader reader)
         auto data = cost_entry.getData();
         auto in_iter = data.begin();
 
-        entry.data.resize(boost::extents[cost_entry.getXDim()][cost_entry.getYDim()]);
+        entry.data.resize(boost::extents[ctx->chip_info->width][ctx->chip_info->height]);
         if (entry.data.num_elements() != data.size()) {
             log_error("entry.data.num_elements() %zu != data.size() %u", entry.data.num_elements(), data.size());
         }
@@ -117,11 +103,6 @@ void CostMap::from_reader(lookahead_storage::CostMap::Reader reader)
         for (; in_iter != data.end(); ++in_iter, ++out) {
             *out = *in_iter;
         }
-
-        entry.penalty = cost_entry.getPenalty();
-
-        entry.offset.first = cost_entry.getXOffset();
-        entry.offset.second = cost_entry.getYOffset();
     }
 }
 
@@ -133,7 +114,7 @@ void CostMap::to_builder(lookahead_storage::CostMap::Builder builder) const
     for (; entry_iter != cost_map.end(); ++entry_iter, ++in) {
         NPNR_ASSERT(in != cost_map_.end());
 
-        in->first.to_builder(entry_iter->getKey());
+        entry_iter->setKey(in->first);
         const CostMapEntry &entry = in->second;
 
         auto data = entry_iter->initData(entry.data.num_elements());
@@ -141,12 +122,23 @@ void CostMap::to_builder(lookahead_storage::CostMap::Builder builder) const
         for (size_t i = 0; i < entry.data.num_elements(); ++i) {
             data.set(i, data_in[i]);
         }
+    }
+}
 
-        entry_iter->setXDim(entry.data.shape()[0]);
-        entry_iter->setYDim(entry.data.shape()[1]);
-        entry_iter->setXOffset(entry.offset.first);
-        entry_iter->setYOffset(entry.offset.second);
-        entry_iter->setPenalty(entry.penalty);
+void CostMap::print() {
+    for (auto entry : cost_map_) {
+        log_info("Cost for wire type id: %d\n", entry.first);
+
+        auto &data = entry.second.data;
+
+        int width = data.shape()[0];
+        int height = data.shape()[1];
+
+        for (int i = 0; i < width; i++) {
+            for (int j = 0; j < height; j++)
+                printf("%d ", data[i][j]);
+            printf("\n");
+        }
     }
 }
 

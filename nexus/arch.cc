@@ -30,6 +30,8 @@
 #include "timing.h"
 #include "util.h"
 
+#define USE_LOOKAHEAD
+
 NEXTPNR_NAMESPACE_BEGIN
 
 // -----------------------------------------------------------------------
@@ -594,6 +596,9 @@ delay_t Arch::getRipupDelayPenalty() const { return 250; }
 
 delay_t Arch::estimateDelay(WireId src, WireId dst) const
 {
+#ifdef USE_LOOKAHEAD
+    return lookahead.estimateDelay(getCtx(), src, dst);
+#else
     const auto &dst_data = wire_data(dst);
     if (src.tile == 0 && dst_data.name == ID_LOCAL_VCC)
         return 0;
@@ -602,6 +607,7 @@ delay_t Arch::estimateDelay(WireId src, WireId dst) const
     int dist_x = std::abs(src_x - dst_x);
     int dist_y = std::abs(src_y - dst_y);
     return 75 * dist_x + 75 * dist_y + 250;
+#endif
 }
 delay_t Arch::predictDelay(BelId src_bel, IdString src_pin, BelId dst_bel, IdString dst_pin) const
 {
@@ -724,6 +730,10 @@ float router2_base_cost(Context *ctx, WireId wire, PipId pip, float crit_weight)
 
 bool Arch::route()
 {
+
+#ifdef USE_LOOKAHEAD
+    lookahead.init(getCtx(), getCtx());
+#endif
     assign_budget(getCtx(), true);
 
     pre_routing();

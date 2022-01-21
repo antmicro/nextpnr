@@ -42,6 +42,21 @@ endif()
 
 add_custom_target(chipdb-${family}-bins DEPENDS ${chipdb_sources} ${chipdb_binaries})
 
+set(PROTOS lookahead.capnp)
+set(CAPNP_SRCS)
+set(CAPNP_HDRS)
+find_package(CapnProto REQUIRED)
+foreach (proto ${PROTOS})
+    capnp_generate_cpp(CAPNP_SRC CAPNP_HDR nexus/${proto})
+    list(APPEND CAPNP_HDRS ${CAPNP_HDR})
+    list(APPEND CAPNP_SRCS ${CAPNP_SRC})
+endforeach()
+
+add_library(extra_capnp STATIC ${CAPNP_SRCS})
+target_link_libraries(extra_capnp PRIVATE CapnProto::capnp)
+
+target_include_directories(extra_capnp INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/nexus)
+
 add_library(chipdb-${family} OBJECT ${NEXUS_CHIPDB} ${chipdb_sources})
 add_dependencies(chipdb-${family} chipdb-${family}-bins)
 target_compile_options(chipdb-${family} PRIVATE -g0 -O0 -w)
@@ -49,5 +64,6 @@ target_compile_definitions(chipdb-${family} PRIVATE NEXTPNR_NAMESPACE=nextpnr_${
 target_include_directories(chipdb-${family} PRIVATE ${family})
 
 foreach(family_target ${family_targets})
+    target_link_libraries(${family_target} PRIVATE extra_capnp)
     target_sources(${family_target} PRIVATE $<TARGET_OBJECTS:chipdb-${family}>)
 endforeach()

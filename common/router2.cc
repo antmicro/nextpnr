@@ -1485,7 +1485,7 @@ Router2Cfg::Router2Cfg(Context *ctx)
     init_curr_cong_weight = ctx->setting<float>("router2/initCurrCongWeight", 0.5f);
     hist_cong_weight = ctx->setting<float>("router2/histCongWeight", 1.0f);
     curr_cong_mult = ctx->setting<float>("router2/currCongWeightMult", 2.0f);
-    estimate_weight = ctx->setting<float>("router2/estimateWeight", 1.25f);
+    estimate_weight = ctx->setting<float>("router2/estimateWeight", 1.50f);
     perf_profile = ctx->setting<bool>("router2/perfProfile", false);
     if (ctx->settings.count(ctx->id("router2/heatmap")))
         heatmap = ctx->settings.at(ctx->id("router2/heatmap")).as_string();
