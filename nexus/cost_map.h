@@ -50,6 +50,13 @@ class CostMap {
 
     std::mutex cost_map_mutex_;
     dict<int32_t, CostMapEntry> cost_map_;
+    
+    void fill_holes(const Context *ctx, boost::multi_array<delay_t, 2> &matrix,
+                    delay_t delay_penality);
+
+    std::pair<delay_t, int> get_nearby_cost_entry(const boost::multi_array<delay_t, 2> &matrix, int cx, int cy,
+                                                  const ArcBounds &bounds);
+    delay_t get_penalty(const boost::multi_array<delay_t, 2> &matrix) const;
 };
 
 NEXTPNR_NAMESPACE_END

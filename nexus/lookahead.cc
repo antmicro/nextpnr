@@ -33,54 +33,208 @@
 #include "context.h"
 #include "log.h"
 #include "scope_lock.h"
+#include "flat_wire_map.h"
+
+#include <tbb/parallel_for_each.h>
 
 NEXTPNR_NAMESPACE_BEGIN
 
-// also known as the L1 norm
-static int manhattan_distance(const std::pair<int32_t, int32_t> &a, const std::pair<int32_t, int32_t> &b)
+static constexpr double kNumberSamplesPercentage = 0.02;
+static constexpr int32_t kMaxSamples = 50;
+static constexpr int32_t kMaxExploreDist = 100;
+
+struct RoutingNode
 {
-    return std::abs(b.first - a.first) + std::abs(b.second - a.second);
+    WireId wire_to_expand;
+    delay_t cost;
+    int32_t depth;
+
+    bool operator<(const RoutingNode &other) const { return cost < other.cost; }
+};
+
+struct PipAndCost
+{
+    PipId upstream_pip;
+    delay_t cost_from_src;
+    int32_t depth;
+};
+
+struct DelayStorage
+{
+    dict<int32_t, dict<std::pair<int32_t, int32_t>, delay_t>> storage;
+    int32_t max_explore_depth = 10000;
+};
+
+static void update_results(const Context *ctx, const FlatWireMap<PipAndCost> &best_path, int32_t wire_id, WireId src_wire,
+                           WireId sink_wire, DelayStorage *storage)
+{
+    int32_t src_x = src_wire.tile % ctx->chip_info->width;
+    int32_t src_y = src_wire.tile / ctx->chip_info->width;
+
+    // Starting from end of result, walk backwards and record the path into
+    // the delay storage.
+    WireId cursor = sink_wire;
+    pool<WireId> seen;
+    while (cursor != src_wire) {
+        // No loops allowed in routing!
+        auto result = seen.emplace(cursor);
+        NPNR_ASSERT(result.second);
+
+        int32_t dst_x = cursor.tile % ctx->chip_info->width;
+        int32_t dst_y = cursor.tile / ctx->chip_info->width;
+
+        std::pair<int32_t, int32_t> dx_dy;
+        dx_dy.first = std::abs(dst_x - src_x);
+        dx_dy.second = std::abs(dst_y - src_y);
+
+        const PipAndCost &pip_and_cost = best_path.at(cursor);
+        auto &delta_data = storage->storage[wire_id];
+        auto result2 = delta_data.emplace(dx_dy, pip_and_cost.cost_from_src);
+        if (!result2.second) {
+            if (result2.first->second > pip_and_cost.cost_from_src && pip_and_cost.cost_from_src > 0) {
+                result2.first->second = pip_and_cost.cost_from_src;
+            }
+        }
+
+        cursor = ctx->getPipSrcWire(pip_and_cost.upstream_pip);
+    }
+}
+
+static void expand_routing_graph_from_wire(const Context *ctx, WireId first_wire, DelayStorage *storage, int32_t wire_id)
+{
+    pool<WireId> seen;
+    std::priority_queue<RoutingNode> to_expand;
+
+    int32_t src_x = first_wire.tile % ctx->chip_info->width;
+    int32_t src_y = first_wire.tile / ctx->chip_info->width;
+
+    RoutingNode initial;
+    initial.cost = 0;
+    initial.wire_to_expand = first_wire;
+    initial.depth = 0;
+
+    to_expand.push(initial);
+
+    FlatWireMap<PipAndCost> best_path(ctx);
+
+    while (!to_expand.empty()) {
+        RoutingNode node = to_expand.top();
+        to_expand.pop();
+
+        auto result = seen.emplace(node.wire_to_expand);
+        if (!result.second)
+            // We've already done an expansion at this wire.
+            continue;
+
+        bool has_bel_pin = false;
+        for (PipId pip : ctx->getPipsDownhill(node.wire_to_expand)) {
+
+            WireId new_wire = ctx->getPipDstWire(pip);
+            if (new_wire == WireId()) {
+                continue;
+            }
+
+            auto bel_pins = ctx->getWireBelPins(new_wire);
+            has_bel_pin = bel_pins.begin() != bel_pins.end();
+
+            RoutingNode next_node;
+            next_node.wire_to_expand = new_wire;
+            next_node.cost = node.cost + ctx->getPipDelay(pip).maxDelay() + ctx->getWireDelay(new_wire).maxDelay();
+            next_node.depth = node.depth + 1;
+
+            // Record best path.
+            PipAndCost pip_and_cost;
+            pip_and_cost.upstream_pip = pip;
+            pip_and_cost.cost_from_src = next_node.cost;
+            pip_and_cost.depth = next_node.depth;
+            auto result = best_path.emplace(new_wire, pip_and_cost);
+            bool is_best_path = true;
+            if (!result.second) {
+                if (result.first.second->cost_from_src > next_node.cost) {
+                    result.first.second->cost_from_src = next_node.cost;
+                    result.first.second->upstream_pip = pip;
+                    result.first.second->depth = next_node.depth;
+                } else {
+                    is_best_path = false;
+                }
+            }
+
+            Loc dst = ctx->getPipLocation(pip);
+            int32_t dst_x = dst.x;
+            int32_t dst_y = dst.y;
+            if (is_best_path && std::abs(dst_x - src_x) < kMaxExploreDist &&
+                std::abs(dst_y - src_y) < kMaxExploreDist && next_node.depth < storage->max_explore_depth) {
+                to_expand.push(next_node);
+            }
+        }
+
+        if (has_bel_pin)
+            update_results(ctx, best_path, wire_id, first_wire, node.wire_to_expand, storage);
+    }
+}
+
+static void expand_wire_type_parallel(const Context *ctx, int32_t wire_id, std::vector<WireId> &wires, DeterministicRNG *rng, DelayStorage *storage)
+{
+    int wire_count = std::min((int)(wires.size() / 100 * kNumberSamplesPercentage), kMaxSamples);
+    log_info("Computing %s costs using %d samples\n", ctx->getWireType(wires[0]).c_str(ctx), wire_count);
+
+    for (size_t count = 0; count < wire_count; count++) {
+        WireId wire = wires[rng->rng(wires.size())];
+
+        log_info("  - Exapnding %s (tile: %d - index: %d)\n", ctx->getWireType(wire).c_str(ctx), wire.tile, wire.index);
+        expand_routing_graph_from_wire(ctx, wire, storage, wire_id);
+    }
 }
 
 void Lookahead::build_lookahead(const Context *ctx, DeterministicRNG *rng)
 {
     auto start = std::chrono::high_resolution_clock::now();
 
-    if (ctx->verbose) {
-        log_info("Building lookahead, first gathering input and output site wires\n");
-    }
+    log_info("Building lookahead, first gathering input and output site wires\n");
 
-    int32_t width = ctx->chip_info->width;
-    int32_t height = ctx->chip_info->height;
+    std::vector<std::pair<int32_t, int32_t>> xys;
 
-    int32_t max_dist = manhattan_distance(std::make_pair(0, 0), std::make_pair(width, height));
+    dict<int32_t, std::vector<WireId>> wires_of_type;
+    DelayStorage storage;
 
     for (auto wire_pair : wire_type_id_map) {
-        dict<std::pair<int32_t, int32_t>, delay_t> delays;
+        auto wire_id = wire_pair.second;
 
-        for (int32_t i = 0; i < ctx->chip_info->width; i++)
-            for (int32_t j = 0; j < ctx->chip_info->height; j++) {
-                int32_t dist = manhattan_distance(std::make_pair(0, 0), std::make_pair(i, j));
+        storage.storage.emplace(wire_id, dict<std::pair<int32_t, int32_t>, delay_t>());
 
-                int32_t penalty = 1 << (int)((dist * 20) / max_dist);
+        for (auto wire : ctx->getWires()) {
+            if (wire_pair.first != ctx->getWireType(wire))
+                continue;
 
-                delay_t delay = penalty;
+            auto result = wires_of_type.emplace(wire_id, std::vector<WireId>{wire});
 
-                delays.emplace(std::make_pair(i, j), delay);
-            }
+            if (!result.second)
+                result.first->second.push_back(wire);
+        }
+    }
 
-        log_info("Assigning cost for wire type: %s\n", wire_pair.first.c_str(ctx));
-        cost_map.set_cost_map(ctx, wire_pair.second, delays);
+    {
+        tbb::parallel_for_each(wires_of_type, [&](std::pair<int32_t, std::vector<WireId>> wires) {
+            expand_wire_type_parallel(ctx, wires.first, wires.second, rng, &storage);
+        });
+    }
+
+    for (auto wire_pair : wire_type_id_map) {
+        int32_t wire_id = wire_pair.second;
+        bool has_storage = storage.storage.count(wire_pair.second);
+        NPNR_ASSERT(has_storage);
+
+        log_info("Delays for wire type %s\n", wire_pair.first.c_str(ctx));
+        for (auto delay_pair : storage.storage[wire_id])
+            log_info("  - %d (%d, %d)\n", delay_pair.second, delay_pair.first.first, delay_pair.first.second);
+
+        cost_map.set_cost_map(ctx, wire_id, storage.storage[wire_id]);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
-    if (ctx->verbose) {
-        log_info("Done with expansion, dt %02fs\n", std::chrono::duration<float>(end - start).count());
-    }
 
-    if (ctx->verbose) {
-        log_info("build_lookahead time %.02fs\n", std::chrono::duration<float>(end - start).count());
-    }
+    cost_map.print();
+    log_info("build_lookahead time %.02fs\n", std::chrono::duration<float>(end - start).count());
 }
 
 constexpr static bool kUseGzipForLookahead = false;
@@ -242,6 +396,7 @@ delay_t Lookahead::estimateDelay(const Context *ctx, WireId src, WireId dst) con
 bool Lookahead::from_reader(lookahead_storage::Lookahead::Reader reader, const Context* ctx)
 {
     cost_map.from_reader(reader.getCostMap(), ctx);
+    cost_map.print();
 
     return true;
 }

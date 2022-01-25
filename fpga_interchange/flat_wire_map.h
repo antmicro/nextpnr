@@ -33,13 +33,8 @@ template <typename Value> class FlatTileWireMap
   public:
     std::pair<Value *, bool> emplace(const Context *ctx, WireId wire, const Value &value)
     {
-        if (values_.empty()) {
-            if (wire.tile == -1) {
-                resize(ctx->chip_info->nodes.size());
-            } else {
-                resize(loc_info(ctx->chip_info, wire).wire_data.size());
-            }
-        }
+        if (values_.empty())
+            resize(loc_info(ctx->chip_info, wire).wire_data.size());
 
         if (set_.get(wire.index)) {
             return std::make_pair(&values_[wire.index], false);
