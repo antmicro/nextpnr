@@ -105,6 +105,12 @@ struct Cluster
     dict<IdString, std::vector<std::pair<IdString, CellInfo *>>> cluster_node_cells;
 };
 
+struct CellPortClockingInfo
+{
+    TimingPortClass     cls;
+    TimingClockingInfo  info;
+};
+
 struct Arch : ArchAPI<ArchRanges>
 {
     boost::iostreams::mapped_file_source blob_file;
@@ -123,6 +129,11 @@ struct Arch : ArchAPI<ArchRanges>
     DedicatedInterconnect dedicated_interconnect;
     dict<int32_t, TileStatus> tileStatus;
     PseudoPipData pseudo_pip_data;
+
+    // Combinational cell delays by (cell type, from pin, to pin)
+    dict<std::tuple<IdString, IdString, IdString>, DelayQuad> cell_delays;
+    // Port clocking information
+    dict<std::tuple<IdString, IdString>, CellPortClockingInfo> cell_clocking;
 
     ArchArgs args;
     Arch(ArchArgs args);

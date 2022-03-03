@@ -218,6 +218,12 @@ NPNR_PACKED_STRUCT(struct NodeTimingPOD {
     TimingCornerPOD<uint32_t> cap;
 });
 
+enum PinEdgeType : uint32_t {
+    PIN_EDGE_NONE = 0,
+    PIN_EDGE_RISE = 1,
+    PIN_EDGE_FALL = 2
+};
+
 NPNR_PACKED_STRUCT(struct PinEdgePOD {
     int32_t pin_name;
     int32_t clock_edge;

@@ -272,6 +272,111 @@ Arch::Arch(ArchArgs args) : args(args), disallow_site_routing(false)
         }
     }
 
+    // Collect worst case timings for cell types to be used when they are
+    // not bound to any BEL.
+    auto getMaxDelay = [](const DelayQuad& a, const DelayQuad& b) {
+        DelayQuad d;
+        d.rise.min_delay = std::max(a.rise.min_delay, b.rise.min_delay);
+        d.rise.max_delay = std::max(a.rise.max_delay, b.rise.max_delay);
+        d.fall.min_delay = std::max(a.fall.min_delay, b.fall.min_delay);
+        d.fall.max_delay = std::max(a.fall.max_delay, b.fall.max_delay);
+        return d;
+    };
+
+    for (size_t k=0; k<chip_info->cell_map->cell_names.size(); ++k) {
+        IdString cell_type = IdString(chip_info->cell_map->cell_names[k]);
+
+        // DEBUG
+        log_info("C:%s\n", cell_type.c_str(this));
+
+        for (size_t i=0; i<chip_info->tile_types.size(); ++i) {
+            const auto& tile_info = chip_info->tile_types[i];
+            for (size_t j=0; j<tile_info.bel_data.size(); j++) {
+                const auto& bel_info = tile_info.bel_data[j];
+
+                if (bel_info.category != BEL_CATEGORY_LOGIC) {
+                    continue;
+                }
+
+                int32_t pin_map_idx = bel_info.pin_map[k];
+                if (pin_map_idx == -1) {
+                    continue;
+                }
+
+                // DEBUG
+                log_info(" T:%s B:%s (%s)\n",
+                    IdString(tile_info.name).c_str(this),
+                    IdString(bel_info.type).c_str(this),
+                    IdString(bel_info.name).c_str(this)
+                );
+
+                const auto& pin_map = chip_info->cell_map->cell_bel_map[pin_map_idx];
+
+                // Build BEL to cell pin name map.
+                // TODO: Handle somehow parameter pins
+                dict<IdString, IdString> bel_pin_to_cell_pin;
+                for (const auto& entry : pin_map.common_pins) {
+                    IdString cell_pin = IdString(entry.cell_pin);
+                    IdString bel_pin  = IdString(entry.bel_pin);
+                    bel_pin_to_cell_pin[bel_pin] = cell_pin;
+                }
+
+                for (const auto& pin_timing : pin_map.timing) {
+
+                    IdString from_pin (pin_timing.from_pin.pin_name);
+                    IdString to_pin   (pin_timing.to_pin.pin_name);
+
+                    if (bel_pin_to_cell_pin.count(from_pin) == 0) {
+                        log_error("Unknown BEL pin %s.%s at tile type %s\n",
+                            IdString(bel_info.name).c_str(this),
+                            from_pin.c_str(this),
+                            IdString(tile_info.name).c_str(this)
+                        );
+                    }
+
+                    if (bel_pin_to_cell_pin.count(to_pin) == 0) {
+                        log_error("Unknown BEL pin %s.%s at tile type %s\n",
+                            IdString(bel_info.name).c_str(this),
+                            to_pin.c_str(this),
+                            IdString(tile_info.name).c_str(this)
+                        );
+                    }
+
+                    from_pin = bel_pin_to_cell_pin.at(from_pin);
+                    to_pin   = bel_pin_to_cell_pin.at(to_pin);
+
+                    log_info("  %s->%s\n", from_pin.c_str(this), to_pin.c_str(this));
+
+                    // Combinational path
+                    if (pin_timing.type == PIN_TMG_COMB) {
+                        NPNR_ASSERT(pin_timing.from_pin.clock_edge == PIN_EDGE_NONE);
+                        NPNR_ASSERT(pin_timing.to_pin.clock_edge   == PIN_EDGE_NONE);
+
+                        DelayQuad delay;
+                        delay.rise.min_delay = pin_timing.value.slow_min;
+                        delay.rise.max_delay = pin_timing.value.slow_max;
+                        delay.fall.min_delay = pin_timing.value.slow_min;
+                        delay.fall.max_delay = pin_timing.value.slow_max;
+
+                        // Store directly if not present or take max if it is
+                        const auto key = std::make_tuple(cell_type, from_pin, to_pin);
+                        if (cell_delays.count(key) == 0) {
+                            cell_delays[key] = delay;
+                        }
+                        else {
+                            cell_delays[key] = getMaxDelay(cell_delays[key], delay);
+                        }
+                    }
+                    // Sequential path
+                    else {
+                        const auto key = std::make_tuple(cell_type, );
+                        if (cell_clocking.count(key))
+                    }
+                }
+            }
+        }
+    }
+
     raw_bin_constant = std::regex("[01]+", std::regex_constants::ECMAScript | std::regex_constants::optimize);
     verilog_bin_constant =
             std::regex("([0-9]+)'b([01]+)", std::regex_constants::ECMAScript | std::regex_constants::optimize);
@@ -1020,6 +1125,18 @@ delay_t Arch::predictDelay(BelId src_bel, IdString src_pin, BelId dst_bel, IdStr
 
 bool Arch::getCellDelay(const CellInfo *cell, IdString fromPort, IdString toPort, DelayQuad &delay) const
 {
+    // The cell is not bound
+    if (cell->bel == BelId()) {
+        const auto key = std::make_tuple(cell->type, fromPort, toPort);
+        if (cell_delays.count(key)) {
+            delay = cell_delays.at(key);
+            log_info("Got it: %s, %s->%s\n", cell->type.c_str(this), fromPort.c_str(this), toPort.c_str(this));
+            return true;
+        }
+        log_info("Nope  : %s, %s->%s\n", cell->type.c_str(this), fromPort.c_str(this), toPort.c_str(this));
+        return false;
+    }
+
     // FIXME: Implement when adding timing-driven place and route.
     return false;
 }
