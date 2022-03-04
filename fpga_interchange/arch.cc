@@ -1239,7 +1239,7 @@ delay_t Arch::estimateDelay(WireId src, WireId dst) const
     delay_t base = 30 * std::min(std::abs(dst_x - src_x), 18) + 10 * std::max(std::abs(dst_x - src_x) - 18, 0) +
                    60 * std::min(std::abs(dst_y - src_y), 6) + 20 * std::max(std::abs(dst_y - src_y) - 6, 0) + 300;
 
-    base = (base * 3) / 2;
+    base = (base * 5) / 2;
     return base;
 #endif
 }
@@ -1258,7 +1258,7 @@ delay_t Arch::predictDelay(BelId src_bel, IdString src_pin, BelId dst_bel, IdStr
     delay_t base = 30 * std::min(std::abs(dst_x - src_x), 18) + 10 * std::max(std::abs(dst_x - src_x) - 18, 0) +
                    60 * std::min(std::abs(dst_y - src_y), 6) + 20 * std::max(std::abs(dst_y - src_y) - 6, 0) + 300;
 
-    base = (base * 3) / 2;
+    base = (base * 5) / 2;
     return base;
 }
 
