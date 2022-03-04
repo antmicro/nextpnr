@@ -274,108 +274,29 @@ Arch::Arch(ArchArgs args) : args(args), disallow_site_routing(false)
 
     // Collect worst case timings for cell types to be used when they are
     // not bound to any BEL.
-    auto getMaxDelay = [](const DelayQuad& a, const DelayQuad& b) {
-        DelayQuad d;
-        d.rise.min_delay = std::max(a.rise.min_delay, b.rise.min_delay);
-        d.rise.max_delay = std::max(a.rise.max_delay, b.rise.max_delay);
-        d.fall.min_delay = std::max(a.fall.min_delay, b.fall.min_delay);
-        d.fall.max_delay = std::max(a.fall.max_delay, b.fall.max_delay);
-        return d;
-    };
-
+    log_info("Setting up cell timings:\n");
     for (size_t k=0; k<chip_info->cell_map->cell_names.size(); ++k) {
-        IdString cell_type = IdString(chip_info->cell_map->cell_names[k]);
-
-        // DEBUG
-        log_info("C:%s\n", cell_type.c_str(this));
-
-        for (size_t i=0; i<chip_info->tile_types.size(); ++i) {
-            const auto& tile_info = chip_info->tile_types[i];
-            for (size_t j=0; j<tile_info.bel_data.size(); j++) {
-                const auto& bel_info = tile_info.bel_data[j];
-
-                if (bel_info.category != BEL_CATEGORY_LOGIC) {
-                    continue;
-                }
-
-                int32_t pin_map_idx = bel_info.pin_map[k];
-                if (pin_map_idx == -1) {
-                    continue;
-                }
-
-                // DEBUG
-                log_info(" T:%s B:%s (%s)\n",
-                    IdString(tile_info.name).c_str(this),
-                    IdString(bel_info.type).c_str(this),
-                    IdString(bel_info.name).c_str(this)
-                );
-
-                const auto& pin_map = chip_info->cell_map->cell_bel_map[pin_map_idx];
-
-                // Build BEL to cell pin name map.
-                // TODO: Handle somehow parameter pins
-                dict<IdString, IdString> bel_pin_to_cell_pin;
-                for (const auto& entry : pin_map.common_pins) {
-                    IdString cell_pin = IdString(entry.cell_pin);
-                    IdString bel_pin  = IdString(entry.bel_pin);
-                    bel_pin_to_cell_pin[bel_pin] = cell_pin;
-                }
-
-                for (const auto& pin_timing : pin_map.timing) {
-
-                    IdString from_pin (pin_timing.from_pin.pin_name);
-                    IdString to_pin   (pin_timing.to_pin.pin_name);
-
-                    if (bel_pin_to_cell_pin.count(from_pin) == 0) {
-                        log_error("Unknown BEL pin %s.%s at tile type %s\n",
-                            IdString(bel_info.name).c_str(this),
-                            from_pin.c_str(this),
-                            IdString(tile_info.name).c_str(this)
-                        );
-                    }
-
-                    if (bel_pin_to_cell_pin.count(to_pin) == 0) {
-                        log_error("Unknown BEL pin %s.%s at tile type %s\n",
-                            IdString(bel_info.name).c_str(this),
-                            to_pin.c_str(this),
-                            IdString(tile_info.name).c_str(this)
-                        );
-                    }
-
-                    from_pin = bel_pin_to_cell_pin.at(from_pin);
-                    to_pin   = bel_pin_to_cell_pin.at(to_pin);
-
-                    log_info("  %s->%s\n", from_pin.c_str(this), to_pin.c_str(this));
-
-                    // Combinational path
-                    if (pin_timing.type == PIN_TMG_COMB) {
-                        NPNR_ASSERT(pin_timing.from_pin.clock_edge == PIN_EDGE_NONE);
-                        NPNR_ASSERT(pin_timing.to_pin.clock_edge   == PIN_EDGE_NONE);
-
-                        DelayQuad delay;
-                        delay.rise.min_delay = pin_timing.value.slow_min;
-                        delay.rise.max_delay = pin_timing.value.slow_max;
-                        delay.fall.min_delay = pin_timing.value.slow_min;
-                        delay.fall.max_delay = pin_timing.value.slow_max;
-
-                        // Store directly if not present or take max if it is
-                        const auto key = std::make_tuple(cell_type, from_pin, to_pin);
-                        if (cell_delays.count(key) == 0) {
-                            cell_delays[key] = delay;
-                        }
-                        else {
-                            cell_delays[key] = getMaxDelay(cell_delays[key], delay);
-                        }
-                    }
-                    // Sequential path
-                    else {
-                        const auto key = std::make_tuple(cell_type, );
-                        if (cell_clocking.count(key))
-                    }
-                }
-            }
-        }
+        setup_cell_timing(k);
     }
+
+    // DEBUG //
+    log_info("Cell delays:\n");
+    for (const auto& it : cell_delays) {
+        const auto& cell = std::get<0>(it.first);
+        const auto& from = std::get<1>(it.first);
+        const auto& to   = std::get<2>(it.first);
+        const auto& dly  = it.second;
+        log_info(" %s, %s->%s [%dps, %dps, %dps, %dps]\n",
+            cell.c_str(this),
+            from.c_str(this),
+            to.c_str(this),
+            dly.rise.min_delay,
+            dly.rise.max_delay,
+            dly.fall.min_delay,
+            dly.fall.max_delay
+        );
+    }
+    // DEBUG //
 
     raw_bin_constant = std::regex("[01]+", std::regex_constants::ECMAScript | std::regex_constants::optimize);
     verilog_bin_constant =
@@ -396,6 +317,224 @@ void Arch::init()
 
     for (size_t tile_type = 0; tile_type < chip_info->tile_types.size(); ++tile_type) {
         pseudo_pip_data.init_tile_type(getCtx(), tile_type);
+    }
+}
+
+void Arch::setup_cell_timing (size_t idx) {
+
+    // Worst case DelayQuad
+    auto getMaxDelayQ = [](const DelayQuad& a, const DelayQuad& b) {
+        DelayQuad d;
+        d.rise.min_delay = std::max(a.rise.min_delay, b.rise.min_delay);
+        d.rise.max_delay = std::max(a.rise.max_delay, b.rise.max_delay);
+        d.fall.min_delay = std::max(a.fall.min_delay, b.fall.min_delay);
+        d.fall.max_delay = std::max(a.fall.max_delay, b.fall.max_delay);
+        return d;
+    };
+
+    // Worst case DelayPair
+    auto getMaxDelayP = [](const DelayPair& a, const DelayPair& b) {
+        DelayPair d;
+        d.min_delay = std::max(a.min_delay, b.min_delay);
+        d.max_delay = std::max(a.max_delay, b.max_delay);
+        return d;
+    };
+
+    auto getEdge = [](const int& edge) {
+        switch (edge)
+        {
+        case PIN_EDGE_RISE: return RISING_EDGE;
+        case PIN_EDGE_FALL: return FALLING_EDGE;
+        default: break;
+        }
+
+        log_error("edge == PIN_EDGE_NONE");
+        return (ClockEdge)-1;
+    };
+
+    auto setPortClass = [](TimingPortClass& curr_cls, const TimingPortClass& new_cls) {
+
+        if (curr_cls == new_cls) {
+            return;
+        }
+
+        switch (curr_cls)
+        {
+        case TMG_CLOCK_INPUT:
+            NPNR_ASSERT(new_cls == TMG_CLOCK_INPUT);
+            break;
+
+        case TMG_REGISTER_INPUT:
+            if (new_cls == TMG_COMB_INPUT) {
+                return;
+            }
+            NPNR_ASSERT(new_cls == TMG_REGISTER_INPUT);
+            break;
+
+        case TMG_REGISTER_OUTPUT:
+            if (new_cls == TMG_COMB_OUTPUT) {
+                return;
+            }
+            NPNR_ASSERT(new_cls == TMG_REGISTER_OUTPUT);
+            break;
+
+        case TMG_COMB_INPUT:
+            NPNR_ASSERT(new_cls == TMG_REGISTER_INPUT ||
+                        new_cls == TMG_CLOCK_INPUT);
+            break;
+
+        case TMG_COMB_OUTPUT:
+            NPNR_ASSERT(new_cls == TMG_REGISTER_OUTPUT);
+            break;
+
+        case TMG_IGNORE:
+        default:
+            break;
+        }
+
+        curr_cls = new_cls;
+    };
+
+    // For logging/debugging purposes
+    const std::unordered_map<PinTimingType, std::string> pinTimingTypeToStr= {
+        {PIN_TMG_COMB,  "PIN_TMG_COMB"},
+        {PIN_TMG_SETUP, "PIN_TMG_SETUP"},
+        {PIN_TMG_HOLD,  "PIN_TMG_HOLD"},
+        {PIN_TMG_CLK2Q, "PIN_TMG_CLK2Q"},
+    };
+
+    IdString cell_type = IdString(chip_info->cell_map->cell_names[idx]);
+    // DEBUG
+    log_info("C:%s\n", cell_type.c_str(this));
+
+    for (size_t i=0; i<chip_info->tile_types.size(); ++i) {
+        const auto& tile_info = chip_info->tile_types[i];
+        for (size_t j=0; j<tile_info.bel_data.size(); j++) {
+            const auto& bel_info = tile_info.bel_data[j];
+
+            if (bel_info.category != BEL_CATEGORY_LOGIC) {
+                continue;
+            }
+
+            int32_t pin_map_idx = bel_info.pin_map[idx];
+            if (pin_map_idx == -1) {
+                continue;
+            }
+
+            // DEBUG
+            log_info(" T:%s B:%s (%s)\n",
+                IdString(tile_info.name).c_str(this),
+                IdString(bel_info.type).c_str(this),
+                IdString(bel_info.name).c_str(this)
+            );
+
+            const auto& pin_map = chip_info->cell_map->cell_bel_map[pin_map_idx];
+
+            // Build BEL to cell pin name map.
+            // TODO: Handle somehow parameter pins
+            dict<IdString, IdString> bel_pin_to_cell_pin;
+            for (const auto& entry : pin_map.common_pins) {
+                IdString cell_pin = IdString(entry.cell_pin);
+                IdString bel_pin  = IdString(entry.bel_pin);
+                bel_pin_to_cell_pin[bel_pin] = cell_pin;
+            }
+
+            for (const auto& pin_timing : pin_map.timing) {
+
+                IdString from_pin (pin_timing.from_pin.pin_name);
+                IdString to_pin   (pin_timing.to_pin.pin_name);
+
+                for (const auto pin : {from_pin, to_pin}) {
+                    if (bel_pin_to_cell_pin.count(pin) == 0) {
+                        log_error("Unknown BEL pin %s.%s at tile type %s\n",
+                            IdString(bel_info.name).c_str(this),
+                            pin.c_str(this),
+                            IdString(tile_info.name).c_str(this)
+                        );
+                    }
+                }
+
+                from_pin = bel_pin_to_cell_pin.at(from_pin);
+                to_pin   = bel_pin_to_cell_pin.at(to_pin);
+
+                // Initialize port clocking info where needed
+                for (const auto pin : {from_pin, to_pin}) {
+                    const auto key = std::make_tuple(cell_type, pin);
+                    if (cell_clocking.count(key) == 0) {
+                        cell_clocking[key].cls = TMG_IGNORE;
+                    }
+                }
+
+                const auto key_from = std::make_tuple(cell_type, from_pin);
+                const auto key_to   = std::make_tuple(cell_type, to_pin);
+
+                auto& clocking_from = cell_clocking[key_from];
+                auto& clocking_to   = cell_clocking[key_to];
+
+                DelayPair delay_pair;
+                delay_pair.min_delay = pin_timing.value.slow_min;
+                delay_pair.max_delay = pin_timing.value.slow_max;
+
+                DelayQuad delay_quad;
+                delay_quad.rise.min_delay = pin_timing.value.slow_min;
+                delay_quad.rise.max_delay = pin_timing.value.slow_max;
+                delay_quad.fall.min_delay = pin_timing.value.slow_min;
+                delay_quad.fall.max_delay = pin_timing.value.slow_max;
+
+                log_info("  %s->%s [%dps, %dps, %dps, %dps] %s\n",
+                    from_pin.c_str(this), to_pin.c_str(this),
+                    delay_quad.rise.min_delay,
+                    delay_quad.rise.max_delay,
+                    delay_quad.fall.min_delay,
+                    delay_quad.fall.max_delay,
+                    pinTimingTypeToStr.at(pin_timing.type).c_str());
+
+                // Combinational path
+                if (pin_timing.type == PIN_TMG_COMB) {
+                    NPNR_ASSERT(pin_timing.from_pin.clock_edge == PIN_EDGE_NONE);
+                    NPNR_ASSERT(pin_timing.to_pin.clock_edge   == PIN_EDGE_NONE);
+
+                    setPortClass(cell_clocking[key_from].cls, TMG_COMB_INPUT);
+                    setPortClass(cell_clocking[key_to].cls,   TMG_COMB_OUTPUT);
+
+                    // Store directly if not present or take max if it is
+                    const auto key = std::make_tuple(cell_type, from_pin, to_pin);
+                    if (cell_delays.count(key) == 0) {
+                        cell_delays[key] = delay_quad;
+                    }
+                    else {
+                        cell_delays[key] = getMaxDelayQ(cell_delays[key], delay_quad);
+                    }
+                }
+                // Setup
+                else if (pin_timing.type == PIN_TMG_SETUP) {
+                    setPortClass(cell_clocking[key_from].cls, TMG_CLOCK_INPUT);
+                    setPortClass(cell_clocking[key_to].cls,   TMG_REGISTER_INPUT);
+
+                    clocking_to.info.clock_port = from_pin;
+                    clocking_to.info.edge = getEdge(pin_timing.from_pin.clock_edge);
+                    clocking_to.info.setup = getMaxDelayP(clocking_to.info.setup, delay_pair);
+                }
+                // Hold
+                else if (pin_timing.type == PIN_TMG_HOLD) {
+                    setPortClass(cell_clocking[key_from].cls, TMG_CLOCK_INPUT);
+                    setPortClass(cell_clocking[key_to].cls,   TMG_REGISTER_INPUT);
+
+                    clocking_to.info.clock_port = from_pin;
+                    clocking_to.info.edge = getEdge(pin_timing.from_pin.clock_edge);
+                    clocking_to.info.hold = getMaxDelayP(clocking_to.info.hold, delay_pair);
+                }
+                // Clock to Q
+                else if (pin_timing.type == PIN_TMG_CLK2Q) {
+                    setPortClass(cell_clocking[key_from].cls, TMG_CLOCK_INPUT);
+                    setPortClass(cell_clocking[key_to].cls,   TMG_REGISTER_OUTPUT);
+
+                    clocking_to.info.clock_port = from_pin;
+                    clocking_to.info.edge = getEdge(pin_timing.from_pin.clock_edge);
+                    clocking_to.info.clockToQ = getMaxDelayQ(clocking_to.info.clockToQ, delay_quad);
+                }
+            }
+        }
     }
 }
 
@@ -1123,32 +1262,112 @@ delay_t Arch::predictDelay(BelId src_bel, IdString src_pin, BelId dst_bel, IdStr
     return base;
 }
 
+// For logging and debugging purposes
+const std::unordered_map<TimingPortClass, std::string> timingPortClassToStr = {
+    {TMG_CLOCK_INPUT,     "TMG_CLOCK_INPUT"},
+    {TMG_GEN_CLOCK,       "TMG_GEN_CLOCK"},
+    {TMG_REGISTER_INPUT,  "TMG_REGISTER_INPUT"},
+    {TMG_REGISTER_OUTPUT, "TMG_REGISTER_OUTPUT"},
+    {TMG_COMB_INPUT,      "TMG_COMB_INPUT"},
+    {TMG_COMB_OUTPUT,     "TMG_COMB_OUTPUT"},
+    {TMG_STARTPOINT,      "TMG_STARTPOINT"},
+    {TMG_ENDPOINT,        "TMG_ENDPOINT"},
+    {TMG_IGNORE,          "TMG_IGNORE"}
+};
+
 bool Arch::getCellDelay(const CellInfo *cell, IdString fromPort, IdString toPort, DelayQuad &delay) const
 {
-    // The cell is not bound
-    if (cell->bel == BelId()) {
-        const auto key = std::make_tuple(cell->type, fromPort, toPort);
-        if (cell_delays.count(key)) {
-            delay = cell_delays.at(key);
-            log_info("Got it: %s, %s->%s\n", cell->type.c_str(this), fromPort.c_str(this), toPort.c_str(this));
-            return true;
-        }
-        log_info("Nope  : %s, %s->%s\n", cell->type.c_str(this), fromPort.c_str(this), toPort.c_str(this));
-        return false;
+    const auto key = std::make_tuple(cell->type, fromPort, toPort);
+    if (cell_delays.count(key)) {
+        delay = cell_delays.at(key);
+//        log_info("getCellDelay: %s, %s->%s ok\n", cell->type.c_str(this), fromPort.c_str(this), toPort.c_str(this));
+        return true;
     }
 
-    // FIXME: Implement when adding timing-driven place and route.
+    // HACK //
+    if (cell->type == this->id("IBUF") || cell->type == this->id("OBUF") || cell->type == this->id("BUFG")) {
+        delay.rise.min_delay = 1;
+        delay.rise.max_delay = 1;
+        delay.fall.min_delay = 1;
+        delay.fall.max_delay = 1;
+        return true;
+    }
+    // HACK //
+
+//    log_info("getCellDelay: %s, %s->%s N/A\n", cell->type.c_str(this), fromPort.c_str(this), toPort.c_str(this));
     return false;
 }
 
 TimingPortClass Arch::getPortTimingClass(const CellInfo *cell, IdString port, int &clockInfoCount) const
 {
-    // FIXME: Implement when adding timing-driven place and route.
+    // Mark ports of internal IO cells as start or end point.
+    if (io_port_types.count(cell->type)) {
+        clockInfoCount = 0;
+        if (port == this->id("I")) {
+            return TMG_STARTPOINT;
+        }
+        if (port == this->id("O")) {
+            return TMG_ENDPOINT;
+        }
+        return TMG_IGNORE;
+    }
+
+    // Ignore timings on inout ports and those of GND and VCC cells.
+    auto port_dir = cell->ports.at(port).type;
+    if (cell->type == this->id("VCC") || cell->type == this->id("GND")) {
+        clockInfoCount = 0;
+        return TMG_IGNORE;
+    }
+
+    // Lookup port clocking info
+    const auto key = std::make_tuple(cell->type, port);
+    if (cell_clocking.count(key)) {
+        const auto& clocking = cell_clocking.at(key);
+//        log_info("getPortTimingClass(): %s.%s %s\n",
+//            cell->type.c_str(this), port.c_str(this), timingPortClassToStr.at(clocking.cls).c_str()
+//        );
+
+        clockInfoCount = 1;
+        return clocking.cls;
+    }
+
+//    log_info("getPortTimingClass(): %s.%s N/A\n",
+//        cell->type.c_str(this), port.c_str(this));
+
+    clockInfoCount = 0;
+
+    // HACK //
+    if (cell->type == this->id("IBUF") || cell->type == this->id("OBUF") || cell->type == this->id("BUFG")) {
+        if (port_dir == PORT_OUT) {
+            return TMG_COMB_OUTPUT;
+        }
+        if (port_dir == PORT_IN) {
+            return TMG_COMB_INPUT;
+        }
+    }
+    // HACK //
+
     return TMG_IGNORE;
 }
 
 TimingClockingInfo Arch::getPortClockingInfo(const CellInfo *cell, IdString port, int index) const
 {
+    // Lookup port clocking info
+    const auto key = std::make_tuple(cell->type, port);
+    if (cell_clocking.count(key)) {
+        const auto& clocking = cell_clocking.at(key);
+
+//        log_info("getPortClockingInfo(): %s.%s clk=%s, edge=%d\n",
+//            cell->type.c_str(this), port.c_str(this),
+//            clocking.info.clock_port.c_str(this), clocking.info.edge);
+
+        NPNR_ASSERT(index == 0);
+        return clocking.info;
+    }
+
+    log_info("getPortClockingInfo(): %s.%s N/A\n",
+        cell->type.c_str(this), port.c_str(this));
+
     // FIXME: Implement when adding timing-driven place and route.
     TimingClockingInfo info;
     return info;

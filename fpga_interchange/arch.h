@@ -139,6 +139,7 @@ struct Arch : ArchAPI<ArchRanges>
     Arch(ArchArgs args);
     virtual ~Arch();
     void init();
+    void setup_cell_timing (size_t idx);
 
     std::string getChipName() const final;
 
