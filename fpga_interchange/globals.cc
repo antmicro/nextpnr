@@ -111,8 +111,10 @@ static int route_global_arc(Context *ctx, NetInfo *net, size_t usr_idx, size_t p
         }
     }
 
-    if (startpoint == WireId())
+    if (startpoint == WireId()) {
+        //log_error("NO STARTPOINT!\n");
         return -1;
+    }
     if (!dry_run) {
         if (ctx->getBoundWireNet(startpoint) == nullptr)
             ctx->bindWire(startpoint, net, STRENGTH_LOCKED);
@@ -137,6 +139,8 @@ static int route_global_arc(Context *ctx, NetInfo *net, size_t usr_idx, size_t p
             ctx->bindPip(pip, net, STRENGTH_LOCKED);
         }
     }
+    int hops = visits.at(startpoint).total_hops;
+    log_info("Hops: %d\n", hops);
     return visits.at(startpoint).total_hops;
 }
 }; // namespace

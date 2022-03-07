@@ -863,8 +863,8 @@ struct Arch : ArchAPI<ArchRanges>
         auto &site_status = get_site_status(tile_status, bel_data);
 
         if (cell != nullptr) {
-            if (!dedicated_interconnect.isBelLocationValid(bel, cell))
-                return false;
+            /* if (!dedicated_interconnect.isBelLocationValid(bel, cell))
+                return false; */
 
             if (io_port_types.count(cell->type)) {
                 // FIXME: Probably need to actually constraint io port cell/bel,
