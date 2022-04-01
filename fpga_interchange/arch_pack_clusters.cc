@@ -54,9 +54,8 @@ struct ClusterWireNode
 };
 } // namespace
 
-static void handle_expansion_node(const Context *ctx, WireId prev_wire, PipId pip, ClusterWireNode curr_node,
-                                  std::vector<ClusterWireNode> &nodes_to_expand, pool<BelId> &bels,
-                                  ExpansionDirection direction)
+static void expand_node(const Context *ctx, WireId prev_wire, PipId pip, ClusterWireNode curr_node,
+                        std::vector<ClusterWireNode> &nodes_to_expand, ExpansionDirection direction)
 {
     WireId wire;
 
@@ -104,41 +103,10 @@ static void handle_expansion_node(const Context *ctx, WireId prev_wire, PipId pi
         next_node.state = curr_node.state;
     }
 
-    if (expand_node)
+    if (expand_node) {
+        log_info("        pip %s added to expansion list\n", ctx->nameOfPip(pip));
         nodes_to_expand.push_back(next_node);
-    else
-        return;
-
-    if (next_node.state == IN_SINK_SITE || next_node.state == ONLY_IN_SOURCE_SITE) {
-        for (BelPin bel_pin : ctx->getWireBelPins(wire)) {
-            BelId bel = bel_pin.bel;
-            auto const &bel_data = bel_info(ctx->chip_info, bel);
-
-            if (bels.count(bel))
-                continue;
-
-            if (bel_data.category != BEL_CATEGORY_LOGIC)
-                return;
-
-            if (bel_data.synthetic)
-                return;
-
-            if (direction == CLUSTER_UPHILL_DIR) {
-                // Check that the BEL is indeed the one reached by backward exploration,
-                // by checking the previous visited wire.
-                for (IdString check_pin : ctx->getBelPins(bel)) {
-                    if (prev_wire == ctx->getBelPinWire(bel, check_pin)) {
-                        bels.insert(bel);
-                        break;
-                    }
-                }
-            } else {
-                bels.insert(bel);
-            }
-        }
     }
-
-    return;
 }
 
 static pool<BelId> find_cluster_bels(const Context *ctx, WireId wire, ExpansionDirection direction,
@@ -160,24 +128,55 @@ static pool<BelId> find_cluster_bels(const Context *ctx, WireId wire, ExpansionD
     nodes_to_expand.push_back(wire_node);
 
     while (!nodes_to_expand.empty()) {
-        ClusterWireNode node_to_expand = nodes_to_expand.back();
-        WireId prev_wire = node_to_expand.wire;
+        ClusterWireNode node = nodes_to_expand.back();
+        WireId prev_wire = node.wire;
         nodes_to_expand.pop_back();
 
-        if (direction == CLUSTER_DOWNHILL_DIR) {
-            for (PipId pip : ctx->getPipsDownhill(node_to_expand.wire)) {
-                if (ctx->is_pip_synthetic(pip))
+        if (node.state == IN_SINK_SITE || node.state == ONLY_IN_SOURCE_SITE) {
+            for (BelPin bel_pin : ctx->getWireBelPins(wire)) {
+                BelId bel = bel_pin.bel;
+                auto const &bel_data = bel_info(ctx->chip_info, bel);
+
+                if (bels.count(bel))
                     continue;
 
-                handle_expansion_node(ctx, prev_wire, pip, node_to_expand, nodes_to_expand, bels, direction);
+                if (bel_data.category != BEL_CATEGORY_LOGIC)
+                    break;
+
+                if (bel_data.synthetic)
+                    break;
+
+                if (direction == CLUSTER_UPHILL_DIR) {
+                    // Check that the BEL is indeed the one reached by backward exploration,
+                    // by checking the previous visited wire.
+                    for (IdString check_pin : ctx->getBelPins(bel)) {
+                        if (prev_wire == ctx->getBelPinWire(bel, check_pin)) {
+                            bels.insert(bel);
+                            break;
+                        }
+                    }
+                } else {
+                    bels.insert(bel);
+                }
+            }
+        }
+
+        if (direction == CLUSTER_DOWNHILL_DIR) {
+            for (PipId pip : ctx->getPipsDownhill(node.wire)) {
+                if (ctx->is_pip_synthetic(pip)) {
+                    continue;
+                }
+
+                expand_node(ctx, prev_wire, pip, node, nodes_to_expand, direction);
             }
         } else {
             NPNR_ASSERT(direction == CLUSTER_UPHILL_DIR);
-            for (PipId pip : ctx->getPipsUphill(node_to_expand.wire)) {
-                if (ctx->is_pip_synthetic(pip))
+            for (PipId pip : ctx->getPipsUphill(node.wire)) {
+                if (ctx->is_pip_synthetic(pip)) {
                     continue;
+                }
 
-                handle_expansion_node(ctx, prev_wire, pip, node_to_expand, nodes_to_expand, bels, direction);
+                expand_node(ctx, prev_wire, pip, node, nodes_to_expand, direction);
             }
         }
     }
@@ -195,6 +194,7 @@ bool Arch::normal_cluster_placement(const Context *ctx, const Cluster &packed_cl
                                     CellInfo *root_cell, BelId root_bel,
                                     std::vector<std::pair<CellInfo *, BelId>> &placement) const
 {
+    pool<BelId> visited_bels;
     BelId next_bel;
 
     // Place cluster
@@ -208,7 +208,7 @@ bool Arch::normal_cluster_placement(const Context *ctx, const Cluster &packed_cl
             next_bel = BelId();
             for (BelId bel :
                  find_cluster_bels(ctx, next_bel_pin_wire, CLUSTER_DOWNHILL_DIR, /*out_of_site_expansion=*/true)) {
-                if (ctx->isValidBelForCellType(cluster_node->type, bel)) {
+                if (ctx->isValidBelForCellType(cluster_node->type, bel) && !visited_bels.count(bel)) {
                     next_bel = bel;
                     break;
                 }
@@ -217,6 +217,8 @@ bool Arch::normal_cluster_placement(const Context *ctx, const Cluster &packed_cl
             if (next_bel == BelId())
                 return false;
         }
+
+        visited_bels.insert(next_bel);
 
         // Build a cell to bell mapping required to find BELs connected to the cluster ports.
         dict<IdString, std::vector<IdString>> cell_bel_pins;
