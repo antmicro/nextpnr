@@ -1188,7 +1188,10 @@ static void reserve_site_ports(SiteArch *site_arch)
 {
     const Context *ctx = site_arch->site_info->ctx;
     site_arch->blocked_site_ports.clear();
-    for (PipId in_pip : site_arch->input_site_ports) {
+    PipId in_pip;
+    in_pip.tile = site_arch->site_info->tile;
+    for (int32_t in_pip_idx : site_arch->io->input_site_ports) {
+        in_pip.index = in_pip_idx;
         pool<NetInfo *, hash_ptr_ops> dedicated_nets;
         const int max_iters = 100;
 

@@ -218,19 +218,21 @@ inline SyntheticType SiteArch::pip_synthetic_type(const SitePip &pip) const
 
 inline SitePip SitePipDownhillIterator::operator*() const
 {
+    PipId pip;
+    pip.tile = site_arch->site_info->tile;
     switch (state) {
     case NORMAL_PIPS: {
-        PipId pip;
-        pip.tile = site_arch->site_info->tile;
         pip.index = (*pips_downhill)[cursor];
         return SitePip::make(site_arch->site_info, pip);
     }
     case PORT_SINK_TO_PORT_SRC:
-        return SitePip::make(site_arch->site_info, site_wire.pip, site_arch->input_site_ports.at(cursor));
+        pip.index = site_arch->io->input_site_ports.at(cursor);
+        return SitePip::make(site_arch->site_info, site_wire.pip, pip);
     case OUT_OF_SITE_SINKS:
         return SitePip::make(site_arch->site_info, site_wire.pip, site_arch->out_of_site_sinks.at(cursor));
     case OUT_OF_SITE_SOURCE_TO_PORT_SRC:
-        return SitePip::make(site_arch->site_info, site_wire, site_arch->input_site_ports.at(cursor));
+        pip.index = site_arch->io->input_site_ports.at(cursor);
+        return SitePip::make(site_arch->site_info, site_wire, pip);
     case SITE_PORT:
         return SitePip::make(site_arch->site_info, site_wire.pip);
     default:
@@ -242,7 +244,7 @@ inline SitePip SitePipDownhillIterator::operator*() const
 inline const RelSlice<int32_t> *SitePipDownhillRange::init_pip_range() const
 {
     NPNR_ASSERT(site_wire.type == SiteWire::SITE_WIRE);
-    NPNR_ASSERT(site_wire.wire.tile == site_arch->site_info->tile);
+    /* NPNR_ASSERT(site_wire.wire.tile == site_arch->site_info->tile); */
     return &site_arch->ctx->chip_info->tile_types[site_arch->site_info->tile_type]
                     .wire_data[site_wire.wire.index]
                     .pips_downhill;

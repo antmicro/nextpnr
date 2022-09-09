@@ -36,6 +36,8 @@ NEXTPNR_NAMESPACE_BEGIN
 
 struct Context;
 
+struct SiteArch;
+
 struct SiteInformation
 {
     const Context *ctx;
@@ -58,6 +60,25 @@ struct SiteInformation
 
     inline bool is_site_port(PipId pip) const NPNR_ALWAYS_INLINE;
 };
+
+struct SiteArchIO {
+    SiteArchIO(const SiteInformation& site_info);
+
+    // Holds pip indices. Construct PipId by adding a tile field.
+    std::vector<int32_t> input_site_ports;
+    std::vector<int32_t> output_site_ports;
+};
+
+struct SiteInfoSiteHasher {
+    static std::pair<int, int> hashable(const SiteInformation& si) {
+        return std::pair<int, int>(si.tile_type, si.site);
+    }
+    size_t operator()(const std::pair<int, int>& pair) const {
+        return (size_t)mkhash(pair.first, pair.second);
+    }
+};
+
+
 
 // Site routing needs a modification of the routing graph.  Within the site,
 // the arch can be consulted for edges.  However the rest of the routing graph
@@ -254,8 +275,7 @@ struct SiteArch
     NetInfo blocking_net;
     SiteNetInfo blocking_site_net;
 
-    std::vector<PipId> input_site_ports;
-    std::vector<PipId> output_site_ports;
+    SiteArchIO *io;
 
     std::vector<SiteWire> out_of_site_sources;
     std::vector<SiteWire> out_of_site_sinks;
@@ -369,13 +389,13 @@ struct SitePipDownhillIterator
             return (cursor < pips_downhill->size());
         case PORT_SINK_TO_PORT_SRC:
             ++cursor;
-            return (cursor < site_arch->input_site_ports.size());
+            return (cursor < site_arch->io->input_site_ports.size());
         case OUT_OF_SITE_SINKS:
             ++cursor;
             return (cursor < site_arch->out_of_site_sinks.size());
         case OUT_OF_SITE_SOURCE_TO_PORT_SRC:
             ++cursor;
-            return (cursor < site_arch->input_site_ports.size());
+            return (cursor < site_arch->io->input_site_ports.size());
         case SITE_PORT:
             ++cursor;
             return false;
@@ -393,11 +413,11 @@ struct SitePipDownhillIterator
         case NORMAL_PIPS:
             return (cursor < pips_downhill->size());
         case PORT_SINK_TO_PORT_SRC:
-            return (cursor < site_arch->input_site_ports.size());
+            return (cursor < site_arch->io->input_site_ports.size());
         case OUT_OF_SITE_SINKS:
             return (cursor < site_arch->out_of_site_sinks.size());
         case OUT_OF_SITE_SOURCE_TO_PORT_SRC:
-            return (cursor < site_arch->input_site_ports.size());
+            return (cursor < site_arch->io->input_site_ports.size());
         case SITE_PORT:
             return true;
         case END:
@@ -532,13 +552,13 @@ struct SitePipUphillIterator
             return false;
         case PORT_SRC_TO_PORT_SINK:
             ++cursor;
-            return (cursor < site_arch->output_site_ports.size());
+            return (cursor < site_arch->io->output_site_ports.size());
         case OUT_OF_SITE_SOURCES:
             ++cursor;
             return (cursor < site_arch->out_of_site_sources.size());
         case OUT_OF_SITE_SINK_TO_PORT_SINK:
             ++cursor;
-            return (cursor < site_arch->output_site_ports.size());
+            return (cursor < site_arch->io->output_site_ports.size());
         case SITE_PORT:
             ++cursor;
             return false;
@@ -560,11 +580,11 @@ struct SitePipUphillIterator
                 return true;
             }
         case PORT_SRC_TO_PORT_SINK:
-            return (cursor < site_arch->output_site_ports.size());
+            return (cursor < site_arch->io->output_site_ports.size());
         case OUT_OF_SITE_SOURCES:
             return (cursor < site_arch->out_of_site_sources.size());
         case OUT_OF_SITE_SINK_TO_PORT_SINK:
-            return (cursor < site_arch->output_site_ports.size());
+            return (cursor < site_arch->io->output_site_ports.size());
         case SITE_PORT:
             return true;
         case END:
@@ -716,10 +736,10 @@ struct SiteWireIterator
             }
         case INPUT_SITE_PORTS:
             ++cursor;
-            return (cursor < site_arch->input_site_ports.size());
+            return (cursor < site_arch->io->input_site_ports.size());
         case OUTPUT_SITE_PORTS:
             ++cursor;
-            return (cursor < site_arch->output_site_ports.size());
+            return (cursor < site_arch->io->output_site_ports.size());
         case OUT_OF_SITE_SOURCES:
             ++cursor;
             return (cursor < site_arch->out_of_site_sources.size());
@@ -744,9 +764,9 @@ struct SiteWireIterator
             }
             return tile_type->wire_data[cursor].site == site_arch->site_info->site;
         case INPUT_SITE_PORTS:
-            return (cursor < site_arch->input_site_ports.size());
+            return (cursor < site_arch->io->input_site_ports.size());
         case OUTPUT_SITE_PORTS:
-            return (cursor < site_arch->output_site_ports.size());
+            return (cursor < site_arch->io->output_site_ports.size());
         case OUT_OF_SITE_SOURCES:
             return (cursor < site_arch->out_of_site_sources.size());
         case OUT_OF_SITE_SINKS:

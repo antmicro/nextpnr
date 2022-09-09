@@ -20,6 +20,7 @@
 
 #include "site_arch.h"
 #include "site_arch.impl.h"
+#include "cache.h"
 
 NEXTPNR_NAMESPACE_BEGIN
 
@@ -103,34 +104,35 @@ void SiteArch::archcheck()
     }
 }
 
-SiteArch::SiteArch(const SiteInformation *site_info)
-        : ctx(site_info->ctx), site_info(site_info), blocking_net(site_info->ctx->id("$nextpnr_blocked_net"))
-{
-    // Build list of input and output site ports
-    //
-    // FIXME: This doesn't need to be computed over and over, move to
-    // arch/chip db.
-    const TileTypeInfoPOD &tile_type = loc_info(&site_info->chip_info(), *site_info);
+SiteArchIO::SiteArchIO(const SiteInformation& site_info) {
+    const TileTypeInfoPOD &tile_type = loc_info(&site_info.chip_info(), site_info);
     PipId pip;
-    pip.tile = site_info->tile;
+    pip.tile = site_info.tile;
     for (size_t pip_index = 0; pip_index < tile_type.pip_data.size(); ++pip_index) {
-        if (tile_type.pip_data[pip_index].site != site_info->site) {
+        if (tile_type.pip_data[pip_index].site != site_info.site) {
             continue;
         }
 
         pip.index = pip_index;
 
-        if (!site_info->is_site_port(pip)) {
+        if (!site_info.is_site_port(pip)) {
             continue;
         }
 
-        WireId src_wire = ctx->getPipSrcWire(pip);
-        if (site_info->is_wire_in_site(src_wire)) {
-            output_site_ports.push_back(pip);
+        WireId src_wire = site_info.ctx->getPipSrcWire(pip);
+        if (site_info.is_wire_in_site(src_wire)) {
+            this->output_site_ports.push_back(pip_index);
         } else {
-            input_site_ports.push_back(pip);
+            this->input_site_ports.push_back(pip_index);
         }
     }
+
+}
+
+SiteArch::SiteArch(const SiteInformation *site_info)
+        : ctx(site_info->ctx), site_info(site_info), blocking_net(site_info->ctx->id("$nextpnr_blocked_net"))
+{
+    io = GenericStaticCache<SiteInformation, SiteArchIO, SiteInfoSiteHasher>::instance().get(*site_info);
 
     // Create list of out of site sources and sinks.
     bool have_vcc_pins = false;
@@ -427,15 +429,19 @@ SitePipUphillRange::SitePipUphillRange(const SiteArch *site_arch, SiteWire site_
 
 SitePip SitePipUphillIterator::operator*() const
 {
+    PipId pip;
+    pip.tile = site_arch->site_info->tile;
     switch (state) {
     case NORMAL_PIPS:
         return SitePip::make(site_arch->site_info, *iter);
     case PORT_SRC_TO_PORT_SINK:
-        return SitePip::make(site_arch->site_info, site_arch->output_site_ports.at(cursor), site_wire.pip);
+        pip.index = site_arch->io->output_site_ports.at(cursor);
+        return SitePip::make(site_arch->site_info, pip, site_wire.pip);
     case OUT_OF_SITE_SOURCES:
         return SitePip::make(site_arch->site_info, site_arch->out_of_site_sources.at(cursor), site_wire.pip);
     case OUT_OF_SITE_SINK_TO_PORT_SINK:
-        return SitePip::make(site_arch->site_info, site_arch->output_site_ports.at(cursor), site_wire);
+        pip.index = site_arch->io->output_site_ports.at(cursor);
+        return SitePip::make(site_arch->site_info, pip, site_wire);
     case SITE_PORT:
         return SitePip::make(site_arch->site_info, site_wire.pip);
     default:
@@ -448,19 +454,20 @@ SiteWire SiteWireIterator::operator*() const
 {
     WireId wire;
     PipId pip;
+    pip.tile = site_arch->site_info->tile;
     SiteWire site_wire;
     switch (state) {
     case NORMAL_WIRES:
-        wire.tile = site_arch->site_info->tile;
+        wire.tile = pip.tile;
         wire.index = cursor;
         return SiteWire::make(site_arch->site_info, wire);
     case INPUT_SITE_PORTS:
-        pip = site_arch->input_site_ports.at(cursor);
+        pip.index = site_arch->io->input_site_ports.at(cursor);
         site_wire = SiteWire::make_site_port(site_arch->site_info, pip, /*dst_wire=*/false);
         NPNR_ASSERT(site_wire.type == SiteWire::SITE_PORT_SOURCE);
         return site_wire;
     case OUTPUT_SITE_PORTS:
-        pip = site_arch->output_site_ports.at(cursor);
+        pip.index = site_arch->io->output_site_ports.at(cursor);
         site_wire = SiteWire::make_site_port(site_arch->site_info, pip, /*dst_wire=*/true);
         NPNR_ASSERT(site_wire.type == SiteWire::SITE_PORT_SINK);
         return site_wire;
