@@ -810,7 +810,7 @@ void check_routing(const SiteArch &site_arch)
             NPNR_ASSERT(site_arch.wire_to_nets.at(user).net->net == net);
             SiteWire cursor = user;
             while (cursor != net_info.driver) {
-                auto iter = net_info.wires.find(cursor);
+                auto iter = net_info.wires.find(cursor.wire.index);
                 if (iter == net_info.wires.end()) {
                     log_error("Wire %s has no pip, but didn't reach driver wire %s\n", site_arch.nameOfWire(cursor),
                               site_arch.nameOfWire(net_info.driver));
@@ -830,7 +830,7 @@ static void apply_simple_routing(Context *ctx, const SiteArch &site_arch, NetInf
 {
     SiteWire wire = user;
     while (wire != site_net->driver) {
-        SitePip site_pip = site_net->wires.at(wire).pip;
+        SitePip site_pip = site_net->wires.at(wire.wire.index).pip;
         NPNR_ASSERT(site_arch.getPipDstWire(site_pip) == wire);
 
         if (site_pip.type == SitePip::SITE_PIP || site_pip.type == SitePip::SITE_PORT) {
@@ -866,7 +866,7 @@ static void apply_constant_routing(Context *ctx, const SiteArch &site_arch, NetI
         PhysicalNetlist::PhysNetlist::NetType pref_const = PhysicalNetlist::PhysNetlist::NetType::SIGNAL;
 
         while (wire != site_net->driver) {
-            SitePip pip = site_net->wires.at(wire).pip;
+            SitePip pip = site_net->wires.at(wire.wire.index).pip;
             NPNR_ASSERT(site_arch.getPipDstWire(pip) == wire);
 
             if (site_arch.isInverting(pip)) {
@@ -967,7 +967,7 @@ static void apply_constant_routing(Context *ctx, const SiteArch &site_arch, NetI
         bool after_inverter = true;
         wire = user;
         while (wire != site_net->driver) {
-            SitePip site_pip = site_net->wires.at(wire).pip;
+            SitePip site_pip = site_net->wires.at(wire.wire.index).pip;
             NPNR_ASSERT(site_arch.getPipDstWire(site_pip) == wire);
 
             if (site_arch.isInverting(site_pip) || site_arch.canInvert(site_pip)) {

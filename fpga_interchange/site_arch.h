@@ -261,7 +261,8 @@ struct SiteNetInfo
     SiteWire driver;
     pool<SiteWire> users;
 
-    dict<SiteWire, SitePipMap> wires;
+    /* Site wire index, SitePipMap */
+    dict<int32_t, SitePipMap> wires;
 };
 
 struct SiteArch

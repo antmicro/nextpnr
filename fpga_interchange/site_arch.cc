@@ -43,7 +43,7 @@ bool SiteArch::bindPip(const SitePip &pip, SiteNetInfo *net)
         return false;
     }
 
-    auto result = net->wires.emplace(dst, SitePipMap{pip, 1});
+    auto result = net->wires.emplace(dst.wire.index, SitePipMap{pip, 1});
     if (!result.second) {
         if (result.first->second.pip != pip) {
             // Pip conflict!
@@ -79,7 +79,7 @@ void SiteArch::unbindPip(const SitePip &pip)
     SiteNetInfo *src_net = unbindWire(src);
     SiteNetInfo *dst_net = unbindWire(dst);
     NPNR_ASSERT(src_net == dst_net);
-    auto iter = dst_net->wires.find(dst);
+    auto iter = dst_net->wires.find(dst.wire.index);
     NPNR_ASSERT(iter != dst_net->wires.end());
     NPNR_ASSERT(iter->second.count >= 1);
     iter->second.count -= 1;
