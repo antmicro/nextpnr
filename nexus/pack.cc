@@ -2625,7 +2625,28 @@ void Arch::assignCellInfo(CellInfo *cell)
             cell->tmg_portmap[port.first] = id(base);
         }
 
-        cell->tmg_index = get_cell_timing_idx(id_LRAM_CORE);
+        auto spen = str_or_default(cell->params, id_EBR_SP_EN, "DISABLE");
+
+        std::string oreg_a = "NO_REG";
+        std::string oreg_b = "NO_REG";
+
+        auto oreg_a_it = cell->params.find(id("OUTREG_A"));
+        auto oreg_b_it = cell->params.find(id("OUTREG_B"));
+        auto oreg_it = cell->params.find(id("OUTREG"));
+
+        if (oreg_it != cell->params.end()) {
+            oreg_a = oreg_it->second.as_string();
+            oreg_b = oreg_it->second.as_string();
+        }
+        else {
+            if (oreg_a_it != cell->params.end())
+                oreg_a = oreg_a_it->second.as_string();
+            if (oreg_b_it != cell->params.end())
+                oreg_b = oreg_b_it->second.as_string();
+        }
+
+        auto variant = idf("%s,%s,%s", spen.c_str(), oreg_a.c_str(), oreg_b.c_str());
+        cell->tmg_index = get_cell_timing_idx(id_LRAM_CORE, variant);
         NPNR_ASSERT(cell->tmg_index != -1);
     } else if (is_dsp_cell(cell)) {
         // Strip off bus indices to get the timing ports

@@ -520,6 +520,10 @@ bool Arch::getCellDelay(const CellInfo *cell, IdString fromPort, IdString toPort
         if (fromPort == id_CLK)
             return false; // don't include delays that are actually clock-to-out here
         return lookup_cell_delay(cell->tmg_index, lookup_port(fromPort), lookup_port(toPort), delay);
+    } else if (cell->type == id_LRAM_CORE) {
+        if (fromPort == id_CLK)
+            return false; // don't include delays that are actually clock-to-out here
+        return lookup_cell_delay(cell->tmg_index, lookup_port(fromPort), lookup_port(toPort), delay);
     } else if (cell->type == id_DCS) {
         if (fromPort.in(id_SELFORCE, id_SEL)) {
             return false;
@@ -645,7 +649,9 @@ TimingClockingInfo Arch::getPortClockingInfo(const CellInfo *cell, IdString port
     } else if (cell->type == id_LRAM_CORE) {
         info.clock_port = id_CLK;
         if (cell->ports.at(port).type == PORT_IN) {
-            lookup_cell_setuphold(cell->tmg_index, lookup_port(port), id_CLK, info.setup, info.hold);
+            // setup/hold is common to all LRAM configurations
+            int index = get_cell_timing_idx(id_LRAM_CORE);
+            lookup_cell_setuphold(index, lookup_port(port), id_CLK, info.setup, info.hold);
         } else {
             NPNR_ASSERT(lookup_cell_delay(cell->tmg_index, id_CLK, lookup_port(port), info.clockToQ));
         }
