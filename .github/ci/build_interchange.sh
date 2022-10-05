@@ -29,7 +29,7 @@ function build_yosys {
 
 function get_dependencies {
     # Install python-fpga-interchange libraries
-    git clone -b ${PYTHON_INTERCHANGE_TAG} https://github.com/SymbiFlow/python-fpga-interchange.git ${PYTHON_INTERCHANGE_PATH}
+    git clone -b ${PYTHON_INTERCHANGE_TAG} https://github.com/antmicro/python-fpga-interchange.git ${PYTHON_INTERCHANGE_PATH}
     pushd ${PYTHON_INTERCHANGE_PATH}
     git submodule update --init --recursive
     python3 -m pip install -r requirements.txt
