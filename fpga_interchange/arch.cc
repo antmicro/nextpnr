@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstring>
 #include <queue>
+#include <iomanip>
 
 #include "constraints.impl.h"
 #include "fpga_interchange.h"
