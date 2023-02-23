@@ -26,18 +26,22 @@
 #include <boost/iostreams/device/mapped_file.hpp>
 #include <iostream>
 #include <regex>
+#include <memory>
 
 #include "PhysicalNetlist.capnp.h"
 #include "arch_api.h"
 #include "constraints.h"
 #include "nextpnr_types.h"
 #include "relptr.h"
+#include "log.h"
+#include "color_log.h"
 
 #include "arch_iterators.h"
 #include "cell_parameters.h"
 #include "chipdb.h"
 #include "dedicated_interconnect.h"
 #include "lookahead.h"
+#include "nisp.h"
 #include "pseudo_pip_model.h"
 #include "site_lut_mapping_cache.h"
 #include "site_router.h"
@@ -52,6 +56,12 @@ struct ArchArgs
     bool rebuild_lookahead;
     bool dont_write_lookahead;
     bool disable_lut_mapping_cache;
+    std::string site_routing_graph;
+#ifdef ENABLE_NISP_DUMPS
+    bool nisp_dump_tcl;
+    long long nisp_tcl_begin;
+    long long nisp_tcl_end;
+#endif /* ENABLE_NISP_DUMPS */
 };
 
 struct ArchRanges
@@ -134,6 +144,13 @@ struct Arch : ArchAPI<ArchRanges>
     IdString archId() const final { return id(chip_info->name.get()); }
     ArchArgs archArgs() const final { return args; }
     IdString archArgsToId(ArchArgs args) const final;
+
+#ifdef ENABLE_NISP
+    nisp::NispHandler nisp_handler;
+#ifdef ENABLE_NISP_DUMPS
+    std::unique_ptr<nisp::NispDumper> nisp_dumper = nullptr;
+#endif /* ENABLE_NISP_DUMPS */
+#endif /* ENABLE_NISP */
 
     // -------------------------------------------------
 
@@ -231,7 +248,7 @@ struct Arch : ArchAPI<ArchRanges>
         return bel;
     }
 
-    PhysicalNetlist::PhysNetlist::NetType get_net_type(NetInfo *net) const
+    PhysicalNetlist::PhysNetlist::NetType get_net_type(const NetInfo *net) const
     {
         NPNR_ASSERT(net != nullptr);
         IdString gnd_cell_name(chip_info->constants->gnd_cell_name);
@@ -297,6 +314,11 @@ struct Arch : ArchAPI<ArchRanges>
         cell->bel = bel;
         cell->belStrength = strength;
 
+#ifdef ENABLE_NISP
+        if (!args.site_routing_graph.empty())
+            this->nisp_handler.bindBel(bel);
+#endif /* ENBLE_NISP */
+
         refreshUiBel(bel);
     }
 
@@ -308,8 +330,14 @@ struct Arch : ArchAPI<ArchRanges>
         NPNR_ASSERT(tile_status.boundcells[bel.index] != nullptr);
 
         CellInfo *cell = tile_status.boundcells[bel.index];
-        tile_status.boundcells[bel.index] = nullptr;
 
+#ifdef ENABLE_NISP
+        if (!args.site_routing_graph.empty()) {
+            this->nisp_handler.unbindBel(bel);
+        }
+#endif /* ENABLE_NISP */
+
+        tile_status.boundcells[bel.index] = nullptr;
         cell->bel = BelId();
         cell->belStrength = STRENGTH_NONE;
 
@@ -735,6 +763,9 @@ struct Arch : ArchAPI<ArchRanges>
     bool pack() final;
     bool place() final;
     bool route() final;
+
+    void dumpDesignStateToTcl(std::string path) const;
+
     // -------------------------------------------------
 
     std::vector<GraphicElement> getDecalGraphics(DecalId decal) const final;
@@ -861,6 +892,9 @@ struct Arch : ArchAPI<ArchRanges>
         CellInfo *cell = tile_status.boundcells[bel.index];
         auto &bel_data = bel_info(chip_info, bel);
         auto &site_status = get_site_status(tile_status, bel_data);
+#ifdef ENABLE_NISP_SITEROUTER_XCHECK
+        bool routing_status = false;
+#endif /* ENABLE_NISP_SITEROUTER_XCHECK */
 
         if (cell != nullptr) {
             if (!dedicated_interconnect.isBelLocationValid(bel, cell))
@@ -886,13 +920,77 @@ struct Arch : ArchAPI<ArchRanges>
                     cluster_info(chip_info, clusters.at(cell->cluster).index).disallow_other_cells)
                     return false;
             }
+
+#ifdef ENABLE_NISP
+
+            if (!args.site_routing_graph.empty()) {
+
+                //if (!luts_mapping_in_site_valid(getCtx(), site_status)) {
+                //    nisp_log("LUTS DO NOT MAP (cell %s)\n", cell->name.c_str(this));
+                //    return false;
+                //}
+
+                nisp::NispHandler &nisp = const_cast<nisp::NispHandler &>(this->nisp_handler);
+                nisp::NispHandler::Routability routability = nisp.isBelLocationValid(bel);
+                nisp.totalChecks++;
+
+#ifdef ENABLE_NISP_DUMPS
+                if ((routability != nisp::NispHandler::Routability::NO_DATA) &&
+                    ((long long)nisp.totalChecks >= this->args.nisp_tcl_begin) &&
+                    ((this->args.nisp_tcl_end == - 1) ||
+                     (long long)nisp.totalChecks <= this->args.nisp_tcl_end))
+                {
+                    auto &bel_data = bel_info(chip_info, bel);
+                    IdString bel_name(bel_data.name);
+
+                    nisp.dumpSiteTcl(this->id(get_site_inst(bel).name.get()), bel, cell->name, true, !this->args.nisp_dump_tcl);
+                }
+#endif /* ENABLE_NISP_DUMPS */
+
+#ifdef ENABLE_NISP_SITEROUTER_XCHECK
+
+                routing_status = site_status.checkSiteRouting(getCtx(), tile_status);
+
+                switch (routability) {
+                    case nisp::NispHandler::Routability::ROUTABLE:
+                        if (routing_status != true)
+                            nisp.falsePositives++;
+                        break;
+
+                    case nisp::NispHandler::Routability::UNROUTABLE:
+                        if (routing_status != false)
+                            nisp.falseNegatives++;
+                        break;
+
+                    case nisp::NispHandler::Routability::NO_DATA:
+                        default:
+                            nisp.misses++;
+                            break;
+                }
+
+                if ((nisp.totalChecks % 1000) == 0) {
+                    log_info("NISP: total:%zu fp:%zu fn:%zu miss:%zu\n", nisp.totalChecks, nisp.falsePositives,
+                             nisp.falseNegatives, nisp.misses);
+                }
+
+                return routing_status;
+
+#else /* ENABLE_NISP_SITEROUTER_XCHECK */
+
+                if (routability == nisp::NispHandler::Routability::NO_DATA)
+                    // No NISP data, perform the full check
+                    return site_status.checkSiteRouting(getCtx(), tile_status);
+
+                return routability == nisp::NispHandler::Routability::ROUTABLE;
+
+#endif /* ENABLE_NISP_SITEROUTER_XCHECK */
+            }
+#endif /* ENABLE_NISP */
         }
 
-        // Still check site status if cell is nullptr; as other bels in the site could be illegal (for example when
-        // dedicated paths can no longer be used after ripping up a cell)
-        bool routing_status = site_status.checkSiteRouting(getCtx(), tile_status);
-
-        return routing_status;
+        // Still check site status if cell is nullptr; as other bels in the site could be illegal
+        // (for example when dedicated paths can no longer be used after ripping up a cell) bool
+        return site_status.checkSiteRouting(getCtx(), tile_status);
     }
 
     CellInfo *getClusterRootCell(ClusterId cluster) const override;
@@ -1183,6 +1281,10 @@ struct Arch : ArchAPI<ArchRanges>
 
     dict<IdString, std::vector<CellInfo *>> macro_to_cells;
     void expand_macros();
+
+#ifdef ENABLE_NISP
+    void read_site_routing_graph(std::string path);
+#endif /* ENABLE_NISP */
 };
 
 NEXTPNR_NAMESPACE_END

@@ -42,6 +42,10 @@
 #include "util.h"
 #include "xdc.h"
 
+#include "nisp.h"
+#include "vivado.h"
+#include "vivado_impl.h"
+
 // Include tcl.h late because it messed with defines and let them leave the
 // scope of the header.
 #include <tcl.h>
@@ -98,7 +102,14 @@ static std::string sha1_hash(const char *data, size_t size)
     return buf.str();
 }
 
-Arch::Arch(ArchArgs args) : args(args), disallow_site_routing(false)
+Arch::Arch(ArchArgs args)
+    : args(args)
+#ifdef ENABLE_NISP
+    , nisp_handler(static_cast<Context*>(this)), disallow_site_routing(false)
+#ifdef ENABLE_NISP_DUMPS
+    , nisp_dumper(nullptr)
+#endif /* ENABLE_NISP_DUMPS */
+#endif /* ENABLE_NISP */
 {
     try {
         blob_file.open(args.chipdb);
@@ -289,6 +300,10 @@ Arch::Arch(ArchArgs args) : args(args), disallow_site_routing(false)
             std::regex("([0-9]+)'h([0-9a-fA-F]+)", std::regex_constants::ECMAScript | std::regex_constants::optimize);
 
     default_tags.resize(max_tag_count);
+
+#ifdef ENABLE_NISP
+    nisp_handler.identifyExclusiveBels();
+#endif
 }
 
 void Arch::init()
@@ -308,6 +323,10 @@ void Arch::init()
     if (const_net_name == IdString()) {
         log_warning("The architecture does not specify preferred constant net. Using VCC as default.\n");
     }
+
+#ifdef ENABLE_NISP_DUMPS
+    nisp_dumper = std::unique_ptr<nisp::NispDumper>(new nisp::NispDumper(getCtx()));
+#endif /* ENABLE_NISP_DUMPS */
 }
 
 // -----------------------------------------------------------------------
@@ -2142,6 +2161,67 @@ void Arch::pack_default_conns()
     for (auto net : dead_nets)
         ctx->nets.erase(net);
 }
+
+void Arch::dumpDesignStateToTcl(std::string path) const {
+    log_info("Writing internal design state to TCL file `%s`...\n", path.c_str());
+
+    using namespace vivado;
+
+    auto tcl = TclWriter(path, this->getCtx());
+
+    tcl << comment("Tcl generated with nextpnr")
+        << comment("All elements dumped by available nets");
+
+    std::unordered_set<CellInfo *> declared_cells;
+
+    auto dump_cell = [&](CellInfo *cell) {
+        auto r = declared_cells.emplace(cell);
+        if (!r.second)
+            return;
+        tcl << DeclareCell(cell);
+    };
+
+    for (auto& net : this->nets) {
+        auto& net_info = net.second;
+
+        tcl << CreateNet(net.first);
+
+        dump_cell(net_info->driver.cell);
+        tcl << ConnectToNet(net.first, net_info->driver);
+        for (auto user : net_info->users) {
+            dump_cell(user.cell);
+            tcl << ConnectToNet(net.first, user);
+        }
+    }
+
+    for (BelId bel : this->getBels()) {
+        CellInfo *cell = this->getBoundBelCell(bel);
+
+        if (cell == nullptr)
+            continue;
+
+        if (cell->bel == bel) {
+            tcl << allow_error(PlaceCell(cell, bel));
+        } else {
+            tcl << comment(std::string("ERROR: Cell ") + cell->name.c_str(this) +
+                           " is set to be bound to BEL " + 
+                           this->getBelName(cell->bel).str(this->getCtx()) +
+                           " but BEL " + this->getBelName(bel).str(this->getCtx()) +
+                           "is set to have this cell bound to it.")
+                << comment(PlaceCell(cell, bel));
+        }
+    }
+
+#ifdef ENABLE_NISP_DUMPS
+    this->nisp_handler.highlightNispStateTcl(tcl);
+#endif /* ENABLE_NISP_DUMPS */
+
+    tcl.close();
+}
+
+#ifdef ENABLE_NISP
+void Arch::read_site_routing_graph(std::string path) { this->nisp_handler.fillLookup(path); }
+#endif /* ENABLE_NISP */
 
 // Instance constraint templates.
 template void Arch::ArchConstraints::bindBel(Arch::ArchConstraints::TagState *, const Arch::ConstraintRange);
