@@ -347,7 +347,7 @@ void Arch::pack_ports()
         log_info("%s\n", getCtx()->nameOf(cell));
         NPNR_ASSERT(cell->bel != BelId());
         if (!isBelLocationValid(cell->bel)) {
-            explain_bel_status(cell->bel);
+            //explain_bel_status(cell->bel);
             log_error("Tightly bound BEL %s was not valid!\n", nameOfBel(cell->bel));
         }
     }

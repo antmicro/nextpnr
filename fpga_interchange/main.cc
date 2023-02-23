@@ -58,6 +58,12 @@ po::options_description FpgaInterchangeCommandHandler::getArchOptions()
     specific.add_options()("rebuild-lookahead", "Ignore lookahead cache and rebuild");
     specific.add_options()("dont-write-lookahead", "Don't write the lookahead file");
     specific.add_options()("disable-lut-mapping-cache", "Disable caching of LUT mapping solutions in site router");
+    specific.add_options()("site-routing-graph", po::value<std::string>(), "Name of site routing graph used to split placement and site-routing");
+#ifdef ENABLE_NISP_DUMPS
+    specific.add_options()("nisp-dump-tcl", "(Debug) Dump TCL when checking BEL locations");
+    specific.add_options()("nisp-tcl-begin", po::value<long long>(), "Dump TCL starting from specified iteration");
+    specific.add_options()("nisp-tcl-end", po::value<long long>(), "Dump TCL up to specified iteration");
+#endif /* ENABLE_NISP_DUMPS */
 
     return specific;
 }
@@ -78,6 +84,27 @@ std::unique_ptr<Context> FpgaInterchangeCommandHandler::createContext(dict<std::
     chipArgs.rebuild_lookahead = vm.count("rebuild_lookahead") != 0;
     chipArgs.dont_write_lookahead = vm.count("dont_write_lookahead") != 0;
     chipArgs.disable_lut_mapping_cache = vm.count("disable-lut-mapping-cache") != 0;
+
+    if (vm.count("site-routing-graph")) {
+        chipArgs.site_routing_graph = vm["site-routing-graph"].as<std::string>();
+    }
+
+#ifdef ENABLE_NISP_DUMPS
+    if (vm.count("nisp-dump-tcl"))
+        chipArgs.nisp_dump_tcl = true;
+    else
+        chipArgs.nisp_dump_tcl = false;
+
+    if (vm.count("nisp-tcl-begin"))
+        chipArgs.nisp_tcl_begin = vm["nisp-tcl-begin"].as<long long>();
+    else
+        chipArgs.nisp_tcl_begin = -1;
+
+    if (vm.count("nisp-tcl-end"))
+        chipArgs.nisp_tcl_end = vm["nisp-tcl-end"].as<long long>();
+    else
+        chipArgs.nisp_tcl_end = -1;
+#endif
 
     if (!vm.count("chipdb")) {
         log_error("chip database binary must be provided\n");
@@ -108,6 +135,12 @@ std::unique_ptr<Context> FpgaInterchangeCommandHandler::createContext(dict<std::
             ctx->parse_xdc(x);
         }
     }
+
+#ifdef ENABLE_NISP
+    if (vm.count("site-routing-graph")) {
+        ctx->read_site_routing_graph(chipArgs.site_routing_graph);
+    }
+#endif /* ENABLE_NISP */
 
     auto end = std::chrono::high_resolution_clock::now();
     log_info("createContext time %.02fs\n", std::chrono::duration<float>(end - start).count());

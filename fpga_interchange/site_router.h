@@ -53,6 +53,10 @@ struct SiteRouter
     void explain(const Context *ctx) const;
 };
 
+#ifdef ENABLE_NISP
+bool luts_mapping_in_site_valid(const Context *ctx, const SiteRouter& site_router);
+#endif
+
 NEXTPNR_NAMESPACE_END
 
 #endif /* SITE_ROUTER_H */

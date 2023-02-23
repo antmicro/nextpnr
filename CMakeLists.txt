@@ -20,6 +20,11 @@ option(EXTERNAL_CHIPDB "Create build with pre-built chipdb binaries" OFF)
 option(WERROR "pass -Werror to compiler (used for CI)" OFF)
 option(PROFILER "Link against libprofiler" OFF)
 option(USE_IPO "Compile nextpnr with IPO" ON)
+option(ENABLE_NISP "(fpga-interchange) Enable usage of NISP data" OFF)
+option(ENABLE_NISP_SITEROUTER_XCHECK "(fpga-interchange) Use SiteRouter for cross-checking NISP results" OFF)
+option(NISP_VERBOSE "(fpga-interchange) Print various NISP logs" OFF)
+option(ENABLE_NISP_DUMPS "(fpga-interchange) Dump detailed info about NISP failures to a file" OFF)
+option(NISP_DUMPS_TCL "(fpga-interchange) Include tcl  in NISP dumps for recreating site state in Vivado" OFF)
 
 if (USE_IPO)
     if (ipo_supported)
@@ -62,6 +67,36 @@ endif()
 
 if (NOT USE_THREADS)
     add_definitions(-DNPNR_DISABLE_THREADS)
+endif()
+
+if(ENABLE_NISP)
+    add_definitions(
+        -DENABLE_NISP
+    )
+endif()
+
+if(ENABLE_NISP_SITEROUTER_XCHECK)
+    add_definitions(
+        -DENABLE_NISP_SITEROUTER_XCHECK
+    )
+endif()
+
+if(NISP_VERBOSE)
+    add_definitions(
+        -DNISP_VERBOSE
+    )
+endif()
+
+if(ENABLE_NISP_DUMPS)
+    add_definitions(
+        -DENABLE_NISP_DUMPS
+    )
+endif()
+
+if(NISP_DUMPS_TCL)
+    add_definitions(
+        -DNISP_DUMPS_TCL
+    )
 endif()
 
 set(link_param "")
