@@ -735,6 +735,9 @@ struct Arch : ArchAPI<ArchRanges>
     bool pack() final;
     bool place() final;
     bool route() final;
+
+    void dumpDesignStateToTcl(std::string path) const;
+
     // -------------------------------------------------
 
     std::vector<GraphicElement> getDecalGraphics(DecalId decal) const final;
