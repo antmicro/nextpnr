@@ -214,6 +214,7 @@ static const dict<IdString, Arch::CellPinsData> base_cell_pin_data = {
                  {id_U2END2, PINSTYLE_PD_NONCIB},
                  {id_U3END3, PINSTYLE_PD_NONCIB},
                  {id_UED0THEN, PINSTYLE_PD_NONCIB},
+                 {id_U3TDE5CK, PINSTYLE_DEDI},
                  {{}, PINSTYLE_CIB},
          }},
         {id_SIOLOGIC,

@@ -167,7 +167,7 @@ struct NexusGlobalRouter
     bool is_relaxed_sink(const PortRef &sink) const
     {
         // This DPHY clock port can't be routed without going through some general routing
-        if (sink.cell->type == id_DPHY_CORE && sink.port == id_URXCKINE)
+        if (sink.cell->type == id_DPHY_CORE && (sink.port == id_URXCKINE || sink.port == id_U3TDE5CK))
             return true;
         // Cases where global clocks are driving fabric
         if ((sink.cell->type == id_OXIDE_COMB && sink.port != id_WCK) ||
